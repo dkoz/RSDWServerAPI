@@ -1,4 +1,4 @@
-set_project("rsdw-restapi")
+set_project("rsdw-serverapi")
 set_version("0.1.0")
 
 add_rules("mode.release")
