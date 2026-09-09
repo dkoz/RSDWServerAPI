@@ -1,0 +1,6 @@
+dist/
+build/
+.xmake/
+src/**/*.o
+src/*.o
+RSDWSDK/

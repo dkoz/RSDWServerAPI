@@ -1,0 +1,10 @@
+# Matches the runtime the egg uses (ghcr.io/pelican-eggs/steamcmd:debian), so
+# the .so never asks the game server's host for a newer glibc than it has.
+FROM debian:bookworm
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+CMD ["make", "-j4"]
