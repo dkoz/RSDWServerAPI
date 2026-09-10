@@ -20,6 +20,7 @@ writes is its own config and log folder.
   attribute the character carries.
 - **Remote kick** through the game's own kick function, persistent until the server
   restarts, exactly like an in-game kick.
+- **Broadcast** to all players through the game's own broadcast function.
 - **Two independent listeners** - REST and Source RCON, each switchable on its own.
 - **Access control on both** - bearer token or RCON password, IP whitelisting, per-address
   rate limiting and automatic blocking after repeated failed logins.
@@ -119,6 +120,7 @@ Every request needs `Authorization: Bearer <token>` unless `BearerToken` is empt
 | GET | `/api/health` | Mod status and uptime |
 | GET | `/api/players` | Every connected player |
 | POST | `/api/kick` | Disconnect a player |
+| POST | `/api/broadcast` | Send a message to every player |
 
 ### GET /api/players
 
@@ -167,8 +169,7 @@ Health and max health come from the character's attributes component, not from
 ### POST /api/kick
 
 `player` accepts a SteamID64, player id, character GUID, character name or display name.
-They are matched in that order, most stable first, and an ambiguous match is refused rather
-than guessed.
+They are matched in that order, most stable first.
 
 ```bash
 curl -X POST http://localhost:8080/api/kick \
@@ -185,6 +186,29 @@ curl -X POST http://localhost:8080/api/kick -H "Authorization: Bearer %TOKEN%" -
 
 A kick holds until the server restarts. The kicked player is remembered and removed again
 if they reconnect.
+
+### POST /api/broadcast
+
+Sends a line to every connected player's chat box.
+
+```bash
+curl -X POST http://localhost:8080/api/broadcast \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Restarting in 5 minutes"}'
+```
+
+From Windows `cmd.exe`:
+
+```
+curl -X POST http://localhost:8080/api/broadcast -H "Authorization: Bearer %TOKEN%" -H "Content-Type: application/json" -d "{\"message\":\"Restarting in 5 minutes\"}"
+```
+
+`sender` is optional and defaults to `Server`, giving `[Server] Restarting in 5 minutes`.
+
+The game has no server identity in chat, so a broadcast is delivered under the receiving
+player's own name. Everyone sees the `[Server]` prefix, but it appears as though they sent
+it themselves.
 
 ### GET /api/health
 
@@ -216,70 +240,12 @@ mcrcon -H 127.0.0.1 -P 27020 -p "$RCON_PASSWORD" players
 | `playercount` | Number of connected players |
 | `player <name>` | Everything known about one player, as JSON |
 | `kick <player> [reason]` | Disconnect a player |
+| `broadcast <message>` | Send a message to every player |
 
 Rate limiting is a per-address token bucket: `CommandsPerMinute` is the sustained rate,
 `CommandBurst` is how much can be spent at once. Separately, `MaxFailedAuth` failed logins
 inside `FailWindowSeconds` refuse that address for `BanSeconds`, enforced at `accept`
 before the password is read.
-
-## How it works
-
-- **Offsets** are traceable to a file in the SDK dump and say so in a comment beside them.
-  Image offsets come from `Dumpspace/OffsetsInfo.json`; struct offsets come from the
-  `static_assert`s the generator emits.
-- **Discovery is validated, not assumed.** `GObjects` and `GNames` are taken from the SDK
-  offsets, structurally checked, then cross-checked against each other by requiring object
-  0 to resolve to the CoreUObject package. A failure falls back to scanning the
-  executable's writable segments. Total failure leaves the endpoints reporting `503`.
-- **Every pointer is checked** against a cached snapshot of `/proc/self/maps` before it is
-  dereferenced. Linux has no `IsBadReadPtr`, and a miss refreshes the snapshot once before
-  answering no, so memory mapped after the last refresh is not mistaken for garbage.
-- **Components are reached through their outer.** The character references its sustenance
-  and hydration components as `FComponentReference`, which is a name-based editor
-  reference and not a live pointer. Every `UActorComponent`'s outer is its owning actor, so
-  one sweep of the object array per request finds them without relying on an unverified
-  offset. Health and skills have real pointers and are read directly - the skill component
-  lives on the player controller, not the pawn.
-- **Kick calls the game's own function.** Reaching any UFunction normally needs
-  `ProcessEvent`, which is absent from a stripped binary. Instead the function's own native
-  thunk is called directly, with an `FFrame` whose layout is recovered at runtime from a
-  frame the engine itself built. That call is queued onto the game thread, because it is
-  net code and running it on a worker thread corrupts the server.
-- **The unique net id is best effort.** `FUniqueNetIdRepl` holds a shared pointer whose
-  slot depends on whether the wrapper carries a vtable, so both candidates are probed and
-  the value is reported only when it resolves to readable text. When it does not,
-  `uniqueNetId` is empty and `uniqueNetIdSource` says so. `characterGuid` and `playerId`
-  are always exact.
-
-## Layout
-
-```
-src/
-  rsdwapi.cpp            entrypoint: LD_PRELOAD constructor, config, listener startup
-  runtime.cpp            process-wide state the endpoints report
-  config/config.h        settings.ini, one section per listener
-  net/access_control.*   IP whitelist, token bucket, failed-auth tracker (shared)
-  http/http_server.*     HTTP listener, bearer auth, whitelist
-  rcon/rcon_server.*     Source RCON listener, whitelist, rate limit, auth ban
-  rcon/rcon_commands.*   command registry and dispatch
-  rcon/commands_*.cpp    one file per feature module
-  api/api_routes.*       route registry
-  api/*_routes.cpp       one file per feature module
-  api/serialize.*        the one place engine structs become JSON or a table
-  engine/dom_engine.h    offsets, with a source comment on every one
-  engine/engine_core.cpp module base, GObjects and GNames discovery and validation
-  engine/uobject.cpp     FName decoding, object iteration, class checks, FString
-  engine/players.cpp     the player snapshot
-  engine/kick.cpp        kick, and the list that keeps it until restart
-  engine/process_event.* game thread pump and FFrame layout recovery
-  engine/native_call.*   calling a UFunction through its native thunk
-  engine/server.cpp      dedicated server settings and game state
-  utils/memory.*         the /proc/self/maps guarded read layer
-```
-
-Adding a feature means one new file in `api/` plus a line in `api_routes.cpp`, and
-optionally one in `rcon/` plus a line in `rcon_commands.cpp`. Both surfaces share the
-engine layer and `serialize.cpp`, so they cannot drift apart.
 
 ## SDK
 
