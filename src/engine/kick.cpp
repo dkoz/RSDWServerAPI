@@ -123,7 +123,6 @@ bool Engine::KickPlayer(const std::string& identifier, const std::string& reason
 
     bool haveReason = false;
 
-    // Net code. Calling it from an HTTP or RCON worker crashes the server.
     if (!GameThread::IsReady()) {
         outError = "kick needs the game thread pump: " + GameThread::Status();
         return false;

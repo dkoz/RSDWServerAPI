@@ -60,8 +60,6 @@ bool Invoke(uintptr_t context, uintptr_t function, void* params,
         return false;
     }
 
-    // Code stays null so parameters come from Locals via the property chain.
-    // A null chain crashes the server on the thunk's first argument.
     uint8_t frame[0x200];
     memset(frame, 0, sizeof(frame));
     *(uintptr_t*)(frame + GameThread::FrameNodeOffset())          = function;
@@ -70,7 +68,6 @@ bool Invoke(uintptr_t context, uintptr_t function, void* params,
     *(uintptr_t*)(frame + GameThread::FrameLocalsOffset())        = (uintptr_t)params;
     *(uintptr_t*)(frame + GameThread::FramePropertyChainOffset()) = chain;
 
-    // Third argument is where the return value goes, not the params base.
     ((ExecFn)exec)((void*)context, frame, (uint8_t*)params + returnValueOffset);
     return true;
 }

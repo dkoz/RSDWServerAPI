@@ -1,5 +1,6 @@
 #include "rcon_commands.h"
 #include "../api/serialize.h"
+#include "../engine/chat.h"
 #include "../engine/dom_engine.h"
 
 #include <algorithm>
@@ -73,6 +74,21 @@ void RegisterPlayerCommands() {
                       return "Kick failed: " + error;
                   }
                   return "Kicked " + args[0] + " (" + reason + ")";
+              }});
+
+    Register({"broadcast", "broadcast <message>", "Send a message to every player.",
+              [](const std::vector<std::string>& args) -> std::string {
+                  if (!EngineReady()) return "Engine not initialized yet.";
+                  if (args.empty()) return "Usage: broadcast <message>";
+
+                  std::string message = args[0];
+                  for (size_t i = 1; i < args.size(); i++) message += " " + args[i];
+
+                  std::string error;
+                  if (!DomChat::Broadcast("[Server] " + message, error)) {
+                      return "Broadcast failed: " + error;
+                  }
+                  return "Broadcast sent.";
               }});
 }
 

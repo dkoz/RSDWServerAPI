@@ -1,5 +1,6 @@
 #include "api_routes.h"
 #include "serialize.h"
+#include "../engine/chat.h"
 #include "../utils/json.h"
 
 #include <algorithm>
@@ -57,6 +58,24 @@ void RegisterPlayers(HttpServer& server) {
             return Error(500, error);
         }
         return Ok("kicked " + target);
+    });
+
+    server.Post("/api/broadcast", [](const HttpRequest& req) -> HttpResponse {
+        if (!EngineReady()) return EngineUnavailable();
+
+        std::string message;
+        if (!Json::GetString(req.body, "message", message) || message.empty()) {
+            return Error(400, "message required");
+        }
+
+        std::string sender = "Server";
+        Json::GetString(req.body, "sender", sender);
+
+        std::string line = sender.empty() ? message : "[" + sender + "] " + message;
+
+        std::string error;
+        if (!DomChat::Broadcast(line, error)) return Error(500, error);
+        return Ok("broadcast sent");
     });
 }
 

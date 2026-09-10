@@ -263,7 +263,89 @@ const char* kPumpCandidates[] = {
     "ServerCheckClientPossession",
 };
 
+bool g_DeriveAttempted = false;
+
+uintptr_t MatchSharedVTableSlot(uintptr_t address, int& outIndex) {
+    DomEngine::Engine* engine = DomEngine::g_Engine;
+    if (!engine) return 0;
+
+    uintptr_t vtables[4] = {};
+    int found = 0;
+    for (int32_t i = 1; i < 400 && found < 4; i++) {
+        uintptr_t object = engine->GetObjectByIndex(i);
+        if (!object) continue;
+        uintptr_t vtable = Mem::ReadPtr(object);
+        if (!vtable || !Mem::InImage((void*)vtable)) continue;
+
+        bool duplicate = false;
+        for (int v = 0; v < found; v++) {
+            if (vtables[v] == vtable) duplicate = true;
+        }
+        if (duplicate) continue;
+        vtables[found++] = vtable;
+    }
+    if (found < 2) return 0;
+
+    uintptr_t best = 0;
+    int bestIndex = -1;
+    for (int slot = 4; slot < 200; slot++) {
+        uintptr_t entry = Mem::ReadPtr(vtables[0] + (uintptr_t)slot * sizeof(uintptr_t));
+        if (!entry || !Mem::InImage((void*)entry)) break;
+
+        bool shared = true;
+        for (int v = 1; v < found; v++) {
+            if (Mem::ReadPtr(vtables[v] + (uintptr_t)slot * sizeof(uintptr_t)) != entry) {
+                shared = false;
+                break;
+            }
+        }
+        if (!shared) continue;
+
+        if (entry > address || address - entry > 0x8000) continue;
+        if (address - entry < 0x40) continue;
+        if (best && entry <= best) continue;
+
+        best = entry;
+        bestIndex = slot;
+    }
+
+    outIndex = bestIndex;
+    return best;
+}
+
+void DeriveProcessEvent() {
+    if (g_ProcessEvent || g_DeriveAttempted) return;
+
+    DomEngine::Engine* engine = DomEngine::g_Engine;
+    if (!engine || !engine->IsInitialized()) return;
+
+    g_DeriveAttempted = true;
+
+    uintptr_t marker = 0;
+    const uintptr_t* stack = &marker;
+
+    for (int i = 0; i < 256; i++) {
+        uintptr_t value = stack[i];
+        if (!value || !Mem::InImage((void*)value)) continue;
+
+        int index = -1;
+        uintptr_t candidate = MatchSharedVTableSlot(value, index);
+        if (!candidate) continue;
+
+        g_ProcessEvent = candidate;
+        g_Original = (ProcessEventFn)candidate;
+        LogMessage("GameThread: ProcessEvent derived at " + HexString(candidate) +
+                   " (vtable slot " + std::to_string(index) + ", from stack return address " +
+                   HexString(value) + ")");
+        return;
+    }
+
+    LogMessage("GameThread: could not identify ProcessEvent by walking the pump stack; "
+               "replicated calls stay disabled");
+}
+
 void PumpThunk(void* context, void* frame, void* result) {
+    DeriveProcessEvent();
     LearnFrameLayout(frame, context);
 
     bool hasWork;
@@ -320,6 +402,8 @@ void RemoveExecPump() {
     g_PumpOriginal = nullptr;
     g_Ready = false;
 }
+
+bool HasProcessEvent() { return g_ProcessEvent != 0 && g_Original != nullptr; }
 
 bool FrameLayoutReady() { return g_LayoutReady; }
 uintptr_t FrameNodeOffset() { return g_OffNode; }

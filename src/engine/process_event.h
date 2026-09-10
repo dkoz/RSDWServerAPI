@@ -11,6 +11,8 @@ bool InstallExecPump();
 
 bool IsReady();
 
+bool HasProcessEvent();
+
 bool FrameLayoutReady();
 uintptr_t FrameNodeOffset();
 uintptr_t FrameObjectOffset();

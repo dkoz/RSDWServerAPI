@@ -1,5 +1,7 @@
 #include "api/api_routes.h"
 #include "config/config.h"
+#include "discord/webhook.h"
+#include "engine/chat.h"
 #include "engine/dom_engine.h"
 #include "engine/native_call.h"
 #include "engine/process_event.h"
@@ -25,14 +27,13 @@ std::thread* g_InitThread = nullptr;
 std::atomic<bool> g_Shutdown{false};
 std::atomic<bool> g_StoppedCleanly{false};
 
-// Runs from atexit, not a destructor attribute: fini_array runs after the C++
-// static destructors, so shutting down there aborts the process.
 void ShutdownListeners() {
     if (g_StoppedCleanly.exchange(true)) return;
     g_Shutdown = true;
 
     if (g_HttpServer) g_HttpServer->Stop();
     if (g_RconServer) g_RconServer->Stop();
+    Discord::Stop();
 
     if (g_InitThread && g_InitThread->joinable()) g_InitThread->join();
 
@@ -116,6 +117,18 @@ void InitThread() {
             !GameThread::InstallExecPump()) {
             LogMessage("RSDWRestAPI: kick disabled - " + GameThread::Status());
             return;
+        }
+
+        DomChat::Initialize();
+
+        if (g_Config.discord.enabled) {
+            Discord::Start(g_Config.discord.webhookUrl, g_Config.discord.username);
+            if (Discord::IsEnabled()) {
+                DomChat::AddListener([](const DomChat::Message& message) {
+                    std::string sender = message.senderName.empty() ? "Unknown" : message.senderName;
+                    Discord::Post("**" + sender + "**: " + message.body);
+                });
+            }
         }
 
         while (!g_Shutdown) {

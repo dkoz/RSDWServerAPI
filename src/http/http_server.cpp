@@ -80,8 +80,6 @@ void HttpServer::Stop() {
     if (!running) return;
     running = false;
 
-    // Wake select now, close only after the join: closing first leaves the
-    // listener calling FD_SET(-1), which fortified glibc aborts over.
     if (listenSocket >= 0) shutdown(listenSocket, SHUT_RDWR);
 
     if (listenerThread && listenerThread->joinable()) {

@@ -120,7 +120,6 @@ void Server::Stop() {
     if (!m_Running) return;
     m_Running = false;
 
-    // Same ordering as the HTTP listener: shutdown, join, then close.
     if (m_ListenSocket >= 0) shutdown(m_ListenSocket, SHUT_RDWR);
 
     if (m_ListenerThread && m_ListenerThread->joinable()) {
