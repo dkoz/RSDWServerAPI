@@ -70,12 +70,40 @@ void Deliver(const Message& message) {
     }
 }
 
+bool IsPlayersChatComponent(Engine& engine, uintptr_t component, uintptr_t controller) {
+    return component && engine.IsA(component, "PlayerChatComponent") &&
+           Mem::ReadPtr(component + Offsets::UObject_Outer) == controller;
+}
+
+uintptr_t FindPlayersChatComponent(Engine& engine, uintptr_t controller) {
+    if (!controller) return 0;
+    uintptr_t component = Mem::ReadPtr(controller + kControllerChatComponent);
+    if (IsPlayersChatComponent(engine, component, controller)) return component;
+
+    // Controller members can move between game builds. Only use a live chat
+    // component belonging to this controller, never an arbitrary readable object.
+    uintptr_t match = 0;
+    for (int32_t i = 0, count = engine.GetObjectCount(); i < count; ++i) {
+        uintptr_t candidate = engine.GetObjectByIndex(i);
+        if (!IsPlayersChatComponent(engine, candidate, controller)) continue;
+        if (match && match != candidate) {
+            LogMessage("Chat: multiple chat components belong to controller; refusing ambiguous recipient");
+            return 0;
+        }
+        match = candidate;
+    }
+    if (match) LogMessage("Chat: resolved recipient component by controller ownership (SDK offset did not validate)");
+    else LogMessage("Chat: no PlayerChatComponent found for recipient controller");
+    return match;
+}
+
 bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
     if (!g_ReceiveFunction || !GameThread::HasProcessEvent()) return false;
     if (!player.controllerPtr || !player.playerStatePtr) return false;
 
-    uintptr_t component = Mem::ReadPtr(player.controllerPtr + kControllerChatComponent);
-    if (!component || !Mem::Readable((void*)component, 0x150)) return false;
+    if (!g_Engine) return false;
+    uintptr_t component = FindPlayersChatComponent(*g_Engine, player.controllerPtr);
+    if (!component) return false;
 
     uint8_t params[kMessageSize + 16];
     memset(params, 0, sizeof(params));

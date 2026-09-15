@@ -46,4 +46,9 @@ $(OUT): $(OBJ)
 clean:
 	rm -f $(OBJ) $(OUT)
 
-.PHONY: all clean
+test:
+	@mkdir -p dist
+	$(CXX) -std=c++17 -O2 -ffunction-sections -fdata-sections -Isrc tests/chat_recipient_test.cpp -Wl,--gc-sections -pthread -o dist/chat_recipient_test
+	./dist/chat_recipient_test
+
+.PHONY: all clean test
