@@ -35,50 +35,7 @@ void WriteDoubleTriple(uintptr_t address, double a, double b, double c) {
     memcpy((void*)address, values, sizeof(values));
 }
 
-bool ResolvePlayer(const Engine* engine, const std::string& identifier,
-                   PlayerInfo& out, std::string& matchedBy, std::string& outError) {
-    std::string PlayerInfo::* const fields[] = {
-        &PlayerInfo::uniqueNetId,
-        &PlayerInfo::characterGuid,
-        &PlayerInfo::characterName,
-        &PlayerInfo::name,
-    };
-
-    std::vector<PlayerInfo> players = engine->GetAllPlayers();
-
-    // 1. playerId numérique exact.
-    for (const PlayerInfo& player : players) {
-        if (std::to_string(player.playerId) == identifier) {
-            out = player;
-            matchedBy = "playerId";
-            return true;
-        }
-    }
-    // 2. Autres champs (précédence documentée).
-    for (size_t f = 0; f < sizeof(fields) / sizeof(fields[0]); f++) {
-        int hits = 0;
-        PlayerInfo match;
-        for (const PlayerInfo& player : players) {
-            if ((player.*fields[f]).empty()) continue;
-            if (player.*fields[f] != identifier) continue;
-            hits++;
-            match = player;
-        }
-        if (hits == 1) {
-            out = match;
-            matchedBy = "field";
-            return true;
-        }
-        if (hits > 1) {
-            outError = "ambiguous identifier \"" + identifier + "\"";
-            return false;
-        }
-    }
-    outError = "player not found: " + identifier;
-    return false;
-}
-
-}
+} // anonymous namespace
 
 /// Téléporte `identifier` aux coordonnées absolues (x, y, z).
 bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
@@ -95,7 +52,7 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
 
     PlayerInfo player;
     std::string matchedBy;
-    if (!ResolvePlayer(this, identifier, player, matchedBy, outError)) return false;
+    if (!ResolvePlayerIdentifier(identifier, player, matchedBy, outError)) return false;
     if (!player.pawnPtr) {
         outError = "player has no spawned pawn";
         return false;
@@ -140,8 +97,8 @@ bool Engine::TeleportPlayer(const std::string& from, const std::string& to,
     }
     PlayerInfo source, target;
     std::string matchedBy;
-    if (!ResolvePlayer(this, from, source, matchedBy, outError)) return false;
-    if (!ResolvePlayer(this, to, target, matchedBy, outError)) return false;
+    if (!ResolvePlayerIdentifier(from, source, matchedBy, outError)) return false;
+    if (!ResolvePlayerIdentifier(to, target, matchedBy, outError)) return false;
     if (!target.hasLocation) {
         outError = "target has no known location";
         return false;

@@ -325,6 +325,11 @@ public:
                           double z, std::string& outError) const;
     bool TeleportPlayer(const std::string& from, const std::string& to,
                         std::string& outError) const;
+
+    // Résolution d'un identifiant de joueur (playerId, netId, characterGuid,
+    // characterName, name) — partagée par le téléport et les routes.
+    bool ResolvePlayerIdentifier(const std::string& identifier, PlayerInfo& out,
+                                 std::string& matchedBy, std::string& outError) const;
     bool SetAttribute(const std::string& identifier,
                       const std::string& attributeName, float value,
                       std::string& outError) const;

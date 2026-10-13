@@ -3,6 +3,8 @@
 #include <functional>
 #include <string>
 
+#include "dom_engine.h"
+
 namespace DomChat {
 
 struct Message {
@@ -34,6 +36,8 @@ void AddEventListener(EventListener listener);
 void Poll();
 
 bool Broadcast(const std::string& body, std::string& outError);
+// Message privé à UN joueur (composant de chat résolu par appartenance).
+bool SendToPlayer(const DomEngine::PlayerInfo& player, const std::string& body);
 bool Tell(const std::string& identifier, const std::string& body,
           std::string& outError);
 

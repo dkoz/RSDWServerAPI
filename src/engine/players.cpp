@@ -28,6 +28,49 @@ bool ReadArray(uintptr_t address, FUEArray& out, int32_t maxCount) {
 
 }
 
+bool Engine::ResolvePlayerIdentifier(const std::string& identifier, PlayerInfo& out,
+                                       std::string& matchedBy,
+                                       std::string& outError) const {
+    std::string PlayerInfo::* const fields[] = {
+        &PlayerInfo::uniqueNetId,
+        &PlayerInfo::characterGuid,
+        &PlayerInfo::characterName,
+        &PlayerInfo::name,
+    };
+
+    std::vector<PlayerInfo> players = GetAllPlayers();
+
+    for (const PlayerInfo& player : players) {
+        if (std::to_string(player.playerId) == identifier) {
+            out = player;
+            matchedBy = "playerId";
+            return true;
+        }
+    }
+    for (size_t f = 0; f < sizeof(fields) / sizeof(fields[0]); f++) {
+        int hits = 0;
+        PlayerInfo match;
+        for (const PlayerInfo& player : players) {
+            if ((player.*fields[f]).empty()) continue;
+            if (player.*fields[f] != identifier) continue;
+            hits++;
+            match = player;
+        }
+        if (hits == 1) {
+            out = match;
+            matchedBy = "field";
+            return true;
+        }
+        if (hits > 1) {
+            outError = "ambiguous identifier \"" + identifier + "\"";
+            return false;
+        }
+    }
+    outError = "player not found: " + identifier;
+    return false;
+}
+
+
 void Engine::ReadAttributeArrays(uintptr_t attributesComponent, uintptr_t attributesOffset,
                                  uintptr_t valuesOffset, bool shared,
                                  std::vector<AttributeInfo>& out) const {

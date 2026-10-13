@@ -189,7 +189,7 @@ uintptr_t FindPlayersChatComponent(Engine& engine, uintptr_t controller) {
     return match;
 }
 
-bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
+bool SendToPlayerInternal(const PlayerInfo& player, const std::string& body) {
     if (!g_ReceiveFunction || !GameThread::HasProcessEvent()) return false;
     if (!player.controllerPtr || !player.playerStatePtr) return false;
 
@@ -218,6 +218,10 @@ bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
 
     GameThread::CallFunction(component, g_ReceiveFunction, params);
     return true;
+}
+
+bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
+    return SendToPlayerInternal(player, body);
 }
 
 bool IsAdmin(uintptr_t controller) {
@@ -488,7 +492,7 @@ bool Broadcast(const std::string& body, std::string& outError) {
     int delivered = 0;
     bool ran = GameThread::RunSync([&]() {
         for (const PlayerInfo& player : players) {
-            if (SendToPlayer(player, body)) delivered++;
+            if (SendToPlayerInternal(player, body)) delivered++;
         }
     }, 10000);
 
@@ -548,7 +552,7 @@ bool Tell(const std::string& identifier, const std::string& body,
     bool delivered = false;
     std::string innerError;
     bool ran = GameThread::RunSync([&]() {
-        delivered = SendToPlayer(target, body);
+        delivered = SendToPlayerInternal(target, body);
         if (!delivered) innerError = "send failed";
     });
     if (!ran) {
