@@ -81,6 +81,41 @@ void RegisterPlayers(HttpServer& server) {
         return Ok("broadcast sent");
     });
 
+    server.Post("/api/teleport", [](const HttpRequest& req) -> HttpResponse {
+        if (!EngineReady()) return EngineUnavailable();
+
+        std::string from, to;
+        if (!Json::GetString(req.body, "from", from) || from.empty() ||
+            !Json::GetString(req.body, "to", to) || to.empty()) {
+            return Error(400, "from and to required (playerId, name, characterName, netId or characterGuid)");
+        }
+
+        std::string error;
+        if (!DomEngine::g_Engine->TeleportPlayer(from, to, error)) {
+            return Error(500, error);
+        }
+        return Ok("teleported " + from + " to " + to);
+    });
+
+    server.Post("/api/tpto", [](const HttpRequest& req) -> HttpResponse {
+        if (!EngineReady()) return EngineUnavailable();
+
+        std::string player, xRaw, yRaw, zRaw;
+        if (!Json::GetString(req.body, "player", player) || player.empty() ||
+            !Json::GetNumber(req.body, "x", xRaw) ||
+            !Json::GetNumber(req.body, "y", yRaw) ||
+            !Json::GetNumber(req.body, "z", zRaw)) {
+            return Error(400, "player, x, y and z required (doubles)");
+        }
+
+        std::string error;
+        if (!DomEngine::g_Engine->TeleportToCoords(player, std::stod(xRaw),
+                                                   std::stod(yRaw), std::stod(zRaw), error)) {
+            return Error(500, error);
+        }
+        return Ok("teleported " + player);
+    });
+
     server.Post("/api/give", [](const HttpRequest& req) -> HttpResponse {
         if (!EngineReady()) return EngineUnavailable();
 

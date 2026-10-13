@@ -4,7 +4,7 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -Isrc
 # libstdc++ and libgcc are linked statically so the mod does not depend on the
 # C++ runtime version of whatever image the server is hosted in.
-LDFLAGS  ?= -shared -pthread -ldl -static-libstdc++ -static-libgcc
+LDFLAGS  ?= -shared -pthread -ldl
 
 SRC := src/rsdwapi.cpp \
        src/runtime.cpp \
@@ -16,6 +16,7 @@ SRC := src/rsdwapi.cpp \
        src/engine/uobject.cpp \
        src/engine/players.cpp \
        src/engine/kick.cpp \
+       src/engine/teleport.cpp \
        src/engine/chat.cpp \
        src/engine/items.cpp \
        src/engine/bans.cpp \

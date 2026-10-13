@@ -25,6 +25,33 @@ std::string Lower(std::string value) {
 }
 
 void RegisterPlayerCommands() {
+    Register({"tp", "tp <player> <target>", "Teleport a player onto another player.",
+              [](const std::vector<std::string>& args) -> std::string {
+                  if (args.size() < 3) return "usage: tp <player> <target>";
+                  std::string error;
+                  if (!DomEngine::g_Engine->TeleportPlayer(args[1], args[2], error)) {
+                      return "tp failed: " + error;
+                  }
+                  return "teleported " + args[1] + " to " + args[2];
+              }});
+
+    Register({"tpto", "tpto <player> <x> <y> <z>", "Teleport a player to absolute coordinates.",
+              [](const std::vector<std::string>& args) -> std::string {
+                  if (args.size() < 5) return "usage: tpto <player> <x> <y> <z>";
+                  try {
+                      std::string error;
+                      if (!DomEngine::g_Engine->TeleportToCoords(
+                              args[1], std::stod(args[2]), std::stod(args[3]),
+                              std::stod(args[4]), error)) {
+                          return "tpto failed: " + error;
+                      }
+                  } catch (...) {
+                      return "tpto failed: invalid coordinates";
+                  }
+                  return "teleported " + args[1];
+              }});
+
+
     Register({"players", "players [json]", "List connected players. 'json' returns the API payload.",
               [](const std::vector<std::string>& args) -> std::string {
                   if (!EngineReady()) return "Engine not initialized yet.";

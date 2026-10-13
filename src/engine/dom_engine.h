@@ -254,6 +254,16 @@ struct DiscoveryInfo {
     int32_t objectCount = 0;
 };
 
+// Composants du joueur résolus par appartenance (l'offset SDK direct peut
+// bouger entre les builds : le scan par Outer sert de recouvrement).
+struct PawnComponents {
+    uintptr_t sustenance = 0;
+    uintptr_t hydration = 0;
+    uintptr_t health = 0;
+    uintptr_t attributes = 0;
+    uintptr_t skill = 0;
+};
+
 class Engine {
 private:
     uintptr_t moduleBase = 0;
@@ -304,13 +314,17 @@ private:
     void ReadAttributeArrays(uintptr_t attributesComponent, uintptr_t attributesOffset,
                              uintptr_t valuesOffset, bool shared,
                              std::vector<AttributeInfo>& out) const;
-    void ReadHealthAndAttributes(PlayerInfo& info) const;
-    void ReadSkills(PlayerInfo& info) const;
+    void ReadHealthAndAttributes(PlayerInfo& info, const PawnComponents&) const;
+    void ReadSkills(PlayerInfo& info, const PawnComponents&) const;
 
 public:
 
     bool KickPlayer(const std::string& identifier, const std::string& reason,
                     std::string& outError) const;
+    bool TeleportToCoords(const std::string& identifier, double x, double y,
+                          double z, std::string& outError) const;
+    bool TeleportPlayer(const std::string& from, const std::string& to,
+                        std::string& outError) const;
     uintptr_t FindFunction(const char* className, const char* functionName) const;
 
     void RememberKick(const std::string& netId, const std::string& name,
