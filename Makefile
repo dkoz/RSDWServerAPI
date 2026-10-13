@@ -17,6 +17,7 @@ SRC := src/rsdwapi.cpp \
        src/engine/players.cpp \
        src/engine/kick.cpp \
        src/engine/teleport.cpp \
+       src/engine/admin.cpp \
        src/engine/chat.cpp \
        src/engine/items.cpp \
        src/engine/bans.cpp \

@@ -325,6 +325,16 @@ public:
                           double z, std::string& outError) const;
     bool TeleportPlayer(const std::string& from, const std::string& to,
                         std::string& outError) const;
+    bool SetAttribute(const std::string& identifier,
+                      const std::string& attributeName, float value,
+                      std::string& outError) const;
+    bool HealPlayer(const std::string& identifier, std::string& outError) const;
+    bool SetGodMode(const std::string& identifier, bool enabled,
+                    std::string& outError) const;
+    bool SetVital(const std::string& identifier, const char* componentName,
+                  float value, std::string& outError) const;
+    bool FeedPlayer(const std::string& identifier, std::string& outError) const;
+    bool HydratePlayer(const std::string& identifier, std::string& outError) const;
     uintptr_t FindFunction(const char* className, const char* functionName) const;
 
     void RememberKick(const std::string& netId, const std::string& name,

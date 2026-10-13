@@ -505,4 +505,61 @@ bool Broadcast(const std::string& body, std::string& outError) {
     return true;
 }
 
+
+bool Tell(const std::string& identifier, const std::string& body,
+          std::string& outError) {
+    Engine* engine = g_Engine;
+    if (!engine || !engine->IsInitialized()) {
+        outError = "engine not initialised";
+        return false;
+    }
+    if (!GameThread::IsReady() || !GameThread::HasProcessEvent()) {
+        outError = "chat unavailable: " + GameThread::Status();
+        return false;
+    }
+    if (body.empty()) {
+        outError = "message is empty";
+        return false;
+    }
+
+    std::vector<PlayerInfo> players = engine->GetAllPlayers();
+    PlayerInfo target;
+    int hits = 0;
+    for (const PlayerInfo& player : players) {
+        bool match = std::to_string(player.playerId) == identifier ||
+                     player.uniqueNetId == identifier ||
+                     player.characterGuid == identifier ||
+                     player.characterName == identifier ||
+                     player.name == identifier;
+        if (match) {
+            hits++;
+            target = player;
+        }
+    }
+    if (hits == 0) {
+        outError = "player not found: " + identifier;
+        return false;
+    }
+    if (hits > 1) {
+        outError = "ambiguous identifier \"" + identifier + "\"";
+        return false;
+    }
+
+    bool delivered = false;
+    std::string innerError;
+    bool ran = GameThread::RunSync([&]() {
+        delivered = SendToPlayer(target, body);
+        if (!delivered) innerError = "send failed";
+    });
+    if (!ran) {
+        outError = "game thread busy: " + GameThread::Status();
+        return false;
+    }
+    if (!delivered) {
+        outError = innerError.empty() ? "message not delivered" : innerError;
+        return false;
+    }
+    return true;
+}
+
 }

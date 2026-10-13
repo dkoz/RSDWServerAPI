@@ -34,5 +34,7 @@ void AddEventListener(EventListener listener);
 void Poll();
 
 bool Broadcast(const std::string& body, std::string& outError);
+bool Tell(const std::string& identifier, const std::string& body,
+          std::string& outError);
 
 }
