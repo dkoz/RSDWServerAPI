@@ -220,10 +220,6 @@ bool SendToPlayerInternal(const PlayerInfo& player, const std::string& body) {
     return true;
 }
 
-bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
-    return SendToPlayerInternal(player, body);
-}
-
 bool IsAdmin(uintptr_t controller) {
     if (!controller || !g_AdminFunction || !g_AdminLibrary) return false;
     if (!NativeCall::IsNative(g_AdminFunction)) return false;
@@ -374,6 +370,14 @@ void SendThunk(void* context, void* frame, void* result) {
     if (!suppress && g_OriginalSend) g_OriginalSend(context, frame, result);
 }
 
+}
+
+// Défini ici — et non dans le namespace anonyme ci-dessus — car chat.h le
+// déclare avec liaison externe : une définition interne serait invisible à
+// l'édition de liens et provoquerait un « symbol lookup error » au premier
+// appel (crash du processus de jeu).
+bool SendToPlayer(const DomEngine::PlayerInfo& player, const std::string& body) {
+    return SendToPlayerInternal(player, body);
 }
 
 bool IsHooked() { return g_Hooked; }
