@@ -1,4 +1,6 @@
 #include "dom_engine.h"
+#include "native_call.h"
+#include "process_event.h"
 #include "../utils/logger.h"
 #include "../utils/memory.h"
 
@@ -99,38 +101,51 @@ bool Engine::SetAttribute(const std::string& identifier,
 
     FUEArray attributes = {};
     FUEArray values = {};
-    if (!ReadArray(component + Offsets::Attributes_FloatAttributes, attributes, 512) ||
-        !ReadArray(component + Offsets::Attributes_AttributeValues, values, 512)) {
-        outError = "attributes unreadable";
-        return false;
-    }
-    if (!Mem::Readable(attributes.Data, sizeof(uintptr_t) * (size_t)attributes.Num) ||
-        !Mem::Readable(values.Data, sizeof(float) * (size_t)values.Num)) {
-        outError = "attributes unreadable";
-        return false;
-    }
-
-    int32_t count = attributes.Num < values.Num ? attributes.Num : values.Num;
-    for (int32_t i = 0; i < count; i++) {
-        uintptr_t attribute = ((uintptr_t*)attributes.Data)[i];
-        if (!attribute) continue;
-        std::string name = GetObjectClassName(attribute);
-        const std::string suffix = "Attribute";
-        if (name.size() > suffix.size() &&
-            name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            name.erase(name.size() - suffix.size());
+    // Même recouvrement que la lecture des joueurs : les attributs peuvent
+    // vivre dans la paire « partagée » (SharedFloatAttributes/SharedAttributeValues),
+    // pas seulement dans la paire normale.
+    for (int pass = 0; pass < 2; pass++) {
+        uintptr_t attrsOffset = pass == 0 ? Offsets::Attributes_FloatAttributes
+                                          : Offsets::Attributes_SharedFloatAttributes;
+        uintptr_t valsOffset = pass == 0 ? Offsets::Attributes_AttributeValues
+                                         : Offsets::Attributes_SharedAttributeValues;
+        attributes = {};
+        values = {};
+        if (!ReadArray(component + attrsOffset, attributes, 512) ||
+            !ReadArray(component + valsOffset, values, 512)) {
+            continue;
         }
-        if (name != attributeName) continue;
-        ((float*)values.Data)[i] = value;
-        LogMessage("Admin: set attribute " + attributeName + " of " + identifier +
-                   " to " + std::to_string(value));
-        return true;
+        if (!Mem::Readable(attributes.Data, sizeof(uintptr_t) * (size_t)attributes.Num) ||
+            !Mem::Readable(values.Data, sizeof(float) * (size_t)values.Num)) {
+            continue;
+        }
+
+        int32_t count = attributes.Num < values.Num ? attributes.Num : values.Num;
+        for (int32_t i = 0; i < count; i++) {
+            uintptr_t attribute = ((uintptr_t*)attributes.Data)[i];
+            if (!attribute) continue;
+            std::string name = GetObjectClassName(attribute);
+            const std::string suffix = "Attribute";
+            if (name.size() > suffix.size() &&
+                name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                name.erase(name.size() - suffix.size());
+            }
+            if (name != attributeName) continue;
+            ((float*)values.Data)[i] = value;
+            LogMessage("Admin: set attribute " + attributeName + " of " + identifier +
+                       " to " + std::to_string(value));
+            return true;
+        }
     }
     outError = "attribute not found: " + attributeName;
     return false;
 }
 
-/// Remet la santé du joueur à son maximum (attribut Health → MaxHealth).
+/// Remet la santé du joueur à son maximum.
+/// Voie propre = la native du jeu HealthComponent::IncreaseHealth (réplique
+/// et notifie le système de santé) sur le game thread — l'écriture directe
+/// d'attribut ne marque pas la propriété « dirty » : le client ne voit pas
+/// le changement. Repli : écriture directe attribut + AuthoritativeHealth.
 bool Engine::HealPlayer(const std::string& identifier, std::string& outError) const {
     if (!initialized) {
         outError = "engine not initialised";
@@ -138,11 +153,60 @@ bool Engine::HealPlayer(const std::string& identifier, std::string& outError) co
     }
     PlayerInfo player;
     if (!Resolve(this, identifier, player, outError)) return false;
+    if (!player.pawnPtr) {
+        outError = "player has no spawned pawn";
+        return false;
+    }
     if (!player.hasHealth) {
         outError = "health not readable for this player";
         return false;
     }
-    return SetAttribute(identifier, "Health", player.maxHealth, outError);
+
+    uintptr_t health =
+        Mem::ReadPtr(player.pawnPtr + Offsets::DomPlayerChar_HealthComponent);
+    if (!health || !IsA(health, "PlayerHealthComponent")) {
+        health = FindOwnedComponent(this, player.pawnPtr, "PlayerHealthComponent");
+    }
+
+    float amount = player.maxHealth - player.health;
+    if (amount > 0.0f && health) {
+        static uintptr_t healFn = 0;
+        if (!healFn) {
+            healFn = FindFunction("HealthComponent", "IncreaseHealth");
+            if (healFn && !NativeCall::IsNative(healFn)) healFn = 0;
+            LogMessage(healFn ? "Heal: HealthComponent::IncreaseHealth resolved"
+                              : "Heal: IncreaseHealth not found — direct write fallback");
+        }
+        if (healFn) {
+            struct Params {
+                float Amount;
+            } params = {amount};
+            bool ok = false;
+            bool ran = GameThread::RunSync(
+                [&]() { ok = NativeCall::Invoke(health, healFn, &params, 0x00); }, 5000);
+            if (ran && ok) {
+                LogMessage("Admin: healed " + identifier + " by " +
+                           std::to_string(amount) + " (native IncreaseHealth)");
+                return true;
+            }
+            LogMessage("Heal: native call refused/unavailable — direct write fallback");
+        }
+    } else if (amount <= 0.0f) {
+        LogMessage("Admin: " + identifier + " already at full health");
+        return true;
+    }
+
+    // Repli (et synchronisation) : écriture directe de l'attribut partagé
+    // « Health » + du champ AuthoritativeHealth du composant.
+    bool ok = SetAttribute(identifier, "Health", player.maxHealth, outError);
+    if (health && Mem::Readable((void*)health, 0x1B8)) {
+        Mem::WriteFloat(health + Offsets::Health_AuthoritativeHealth, player.maxHealth);
+    }
+    if (ok) {
+        LogMessage("Admin: healed " + identifier + " to " + std::to_string(player.maxHealth) +
+                   " (direct write)");
+    }
+    return ok;
 }
 
 /// Bascule `bCanDie` du composant de santé (god mode).
