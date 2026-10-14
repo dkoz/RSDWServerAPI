@@ -24,11 +24,12 @@ namespace DomEngine {
 namespace Offsets {
 
 // Image offsets - Source: RSDWSDK/Dumpspace/OffsetsInfo.json
-// Ajustés pour le build 247725 (2026-10-11), valeurs vérifiées sur le
-// serveur de production par le scan de segments du mod (base 0x200000) :
-// GNames 0xDD7EFF8, GObjects 0xDE3A510.
-constexpr uintptr_t GObjects = 0x0DC3A510;
-constexpr uintptr_t GNames   = 0x0DB7EFF8;
+// Build 247725 (2026-10-11) : GNames 0x0DB7EFF8, GObjects 0x0DC3A510.
+// Build 1.0.1 (CL 248854, 2026-10-14), vérifiés en live sur le serveur de
+// production par le scan de segments du mod (base 0x200000) :
+// GNames 0xDDDAFF8, GObjects 0xDE96510.
+constexpr uintptr_t GObjects = 0x0DC96510;
+constexpr uintptr_t GNames   = 0x0DBDAFF8;
 constexpr uintptr_t GWorld   = 0x0DD525F8;
 
 // TUObjectArray / FUObjectItem - Source: RSDWSDK/CppSDK/SDK/Basic.hpp

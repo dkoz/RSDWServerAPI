@@ -221,7 +221,24 @@ bool SendToPlayerInternal(const PlayerInfo& player, const std::string& body) {
 }
 
 bool IsAdmin(uintptr_t controller) {
-    if (!controller || !g_AdminFunction || !g_AdminLibrary) return false;
+    if (!controller) return false;
+
+    Engine* engine = g_Engine;
+    if (!engine || !engine->IsInitialized()) return false;
+
+    // PrivilegeFunctionLibrary is a late-registered game feature: the
+    // one-shot lookup in Initialize() can miss it when the mod boots
+    // before the object array is fully populated (chat commands would
+    // stay unavailable for the whole run). Resolve lazily on first use,
+    // like items.cpp does for TryGiveItemToPlayer.
+    if (!g_AdminFunction) {
+        g_AdminFunction =
+            engine->FindFunction("PrivilegeFunctionLibrary", "ControllerIsOwnerOrAdmin");
+    }
+    if (!g_AdminLibrary) {
+        g_AdminLibrary = engine->FindObject("PrivilegeFunctionLibrary", true);
+    }
+    if (!g_AdminFunction || !g_AdminLibrary) return false;
     if (!NativeCall::IsNative(g_AdminFunction)) return false;
 
     struct Params {
