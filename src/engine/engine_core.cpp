@@ -58,7 +58,7 @@ bool Engine::ResolveModule() {
     ImageInfo image;
     dl_iterate_phdr(&CollectImage, &image);
     if (!image.found || !image.start) {
-        LogMessage("Engine: could not locate the main executable image");
+        LogMessage("Engine: could not locate the main executable image (image de l'exécutable introuvable)");
         return false;
     }
 
@@ -108,24 +108,24 @@ bool Engine::ResolveObjectArray() {
     if (ValidateObjectArray(candidate)) {
         gObjects = candidate;
         gObjectsSource = "sdk-offset";
-        LogMessage("Engine: GObjects at " + HexString(gObjects) + " (SDK offset)");
+        LogMessage("Engine: GObjects at " + HexString(gObjects) + " (SDK offset / offset SDK)");
         return true;
     }
 
     if (ShouldLogDiscovery()) {
         LogMessage("Engine: GObjects SDK offset " + HexString(candidate) +
-                   " did not validate, scanning writable segments");
+                   " did not validate, scanning writable segments — offset SDK invalide, scan des segments inscriptibles");
     }
 
     candidate = ScanForObjectArray();
     if (!candidate) {
-        if (ShouldLogDiscovery()) LogMessage("Engine: GObjects scan found nothing");
+        if (ShouldLogDiscovery()) LogMessage("Engine: GObjects scan found nothing (scan : rien trouvé)");
         return false;
     }
 
     gObjects = candidate;
     gObjectsSource = "segment-scan";
-    LogMessage("Engine: GObjects at " + HexString(gObjects) + " (segment scan)");
+    LogMessage("Engine: GObjects at " + HexString(gObjects) + " (segment scan / scan de segments)");
     return true;
 }
 
@@ -136,7 +136,7 @@ uintptr_t Engine::ScanForObjectArray() const {
 
     for (const auto& segment : image.writableSegments) {
         LogVerbose("Engine: scanning segment " + HexString(segment.first) + " - " +
-                   HexString(segment.second));
+                   HexString(segment.second) + " (scan du segment)");
         for (uintptr_t addr = segment.first; addr + 0x20 <= segment.second; addr += 8) {
             int32_t numElements = *(const int32_t*)(addr + Offsets::ObjArray_NumElements);
             if (numElements < 1000 || numElements > 20000000) continue;
@@ -176,13 +176,13 @@ bool Engine::ResolveNamePool() {
     if (ValidateNamePool(candidate)) {
         gNames = candidate;
         gNamesSource = "sdk-offset";
-        LogMessage("Engine: GNames at " + HexString(gNames) + " (SDK offset)");
+        LogMessage("Engine: GNames at " + HexString(gNames) + " (SDK offset / offset SDK)");
         return true;
     }
 
     if (ShouldLogDiscovery()) {
         LogMessage("Engine: GNames SDK offset " + HexString(candidate) +
-                   " did not validate, scanning writable segments");
+                   " did not validate, scanning writable segments — offset SDK invalide, scan des segments inscriptibles");
     }
 
     ImageInfo image;
@@ -199,12 +199,12 @@ bool Engine::ResolveNamePool() {
             if (!ValidateNamePool(addr)) continue;
             gNames = addr;
             gNamesSource = "segment-scan";
-            LogMessage("Engine: GNames at " + HexString(gNames) + " (segment scan)");
+            LogMessage("Engine: GNames at " + HexString(gNames) + " (segment scan / scan de segments)");
             return true;
         }
     }
 
-    if (ShouldLogDiscovery()) LogMessage("Engine: GNames scan found nothing");
+    if (ShouldLogDiscovery()) LogMessage("Engine: GNames scan found nothing (scan : rien trouvé)");
     return false;
 }
 
@@ -221,16 +221,16 @@ bool Engine::Initialize() {
     if (!LooksLikeText(firstName) || firstName.find("CoreUObject") == std::string::npos) {
         if (ShouldLogDiscovery()) {
             LogMessage("Engine: cross-check failed - object 0 resolved to '" + firstName +
-                       "', expected the CoreUObject package. Refusing to serve engine data.");
+                       "', expected the CoreUObject package. Refusing to serve engine data. — contre-vérification échouée : l'objet 0 devrait être le package CoreUObject, refus de servir des données moteur.");
         }
         return false;
     }
 
     LogMessage("Engine: object 0 resolves to '" + firstName + "', " +
-               std::to_string(GetObjectCount()) + " objects tracked");
+               std::to_string(GetObjectCount()) + " objects tracked (objets suivis)");
 
     initialized = true;
-    LogMessage("Engine: initialized");
+    LogMessage("Engine: initialized (moteur initialisé)");
     return true;
 }
 

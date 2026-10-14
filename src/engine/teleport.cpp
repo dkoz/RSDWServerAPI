@@ -23,6 +23,9 @@ uintptr_t ResolveTeleportFunction(const Engine* engine) {
     // Build 1.0.1 (CL 248854) : AActor::TeleportTo n'est plus enregistré
     // comme UFunction dans le pool d'objets — le wrapper BlueprintCallable
     // est K2_TeleportTo (vérifié en mémoire sur le serveur de prod).
+    // EN: on build 1.0.1 (CL 248854), AActor::TeleportTo is no longer a
+    // registered UFunction in the object pool — the BlueprintCallable
+    // wrapper is K2_TeleportTo (verified in memory on the prod server).
     g_TeleportFn = engine->FindFunction("Actor", "TeleportTo");
     g_TeleportRetOffset = 0x38;
     if (!g_TeleportFn) {
@@ -32,9 +35,9 @@ uintptr_t ResolveTeleportFunction(const Engine* engine) {
     if (g_TeleportFn && !NativeCall::IsNative(g_TeleportFn)) g_TeleportFn = 0;
     if (g_TeleportFn) {
         LogMessage("Teleport: Actor::TeleportTo/K2_TeleportTo resolved (ret " +
-                   HexString(g_TeleportRetOffset) + "), native calls enabled");
+                   HexString(g_TeleportRetOffset) + "), native calls enabled — résolu, appels natifs activés");
     } else {
-        LogMessage("Teleport: Actor::TeleportTo not found — direct RootComponent write only");
+        LogMessage("Teleport: Actor::TeleportTo not found — direct RootComponent write only — introuvable, écriture directe du RootComponent uniquement");
     }
     return g_TeleportFn;
 }
@@ -86,6 +89,9 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
         // Le handler REST tourne sur le thread HTTP : les natives UE
         // s'exécutent sur le game thread. On passe par la file du pump
         // (drainée quand une RPC de joueur arrive) — comme Broadcast().
+        // EN: the REST handler runs on the HTTP thread; UE natives must
+        // run on the game thread. Marshalled through the pump queue
+        // (drained when a player RPC arrives) — like Broadcast().
         bool ok = false;
         bool ran = GameThread::RunSync(
             [&]() { ok = NativeCall::Invoke(player.pawnPtr, fn, params, g_TeleportRetOffset); },
@@ -93,12 +99,12 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
         if (ran && ok) {
             LogMessage("Teleport: " + identifier + " teleported to " +
                        std::to_string(x) + "," + std::to_string(y) + "," +
-                       std::to_string(z) + " (native)");
+                       std::to_string(z) + " (native / natif)");
             return true;
         }
         LogMessage("Teleport: native call refused/unavailable (pump=" +
                    std::string(GameThread::IsReady() ? "ready" : "absent") +
-                   ") — direct write fallback");
+                   ") — direct write fallback — appel natif refusé/indisponible, repli en écriture directe");
     }
 
     uintptr_t root = Mem::ReadPtr(player.pawnPtr + Offsets::Actor_RootComponent);
@@ -107,7 +113,7 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
         return false;
     }
     WriteDoubleTriple(root + Offsets::SceneComp_RelativeLocation, x, y, z);
-    LogMessage("Teleport: " + identifier + " location written directly");
+    LogMessage("Teleport: " + identifier + " location written directly — position écrite directement");
     return true;
 }
 

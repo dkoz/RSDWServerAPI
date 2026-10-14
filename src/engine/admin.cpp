@@ -104,6 +104,9 @@ bool Engine::SetAttribute(const std::string& identifier,
     // Même recouvrement que la lecture des joueurs : les attributs peuvent
     // vivre dans la paire « partagée » (SharedFloatAttributes/SharedAttributeValues),
     // pas seulement dans la paire normale.
+    // EN: same coverage as the player scan — attributes may live in the
+    // "shared" pair (SharedFloatAttributes/SharedAttributeValues), not only
+    // in the plain pair.
     for (int pass = 0; pass < 2; pass++) {
         uintptr_t attrsOffset = pass == 0 ? Offsets::Attributes_FloatAttributes
                                           : Offsets::Attributes_SharedFloatAttributes;
@@ -132,7 +135,7 @@ bool Engine::SetAttribute(const std::string& identifier,
             }
             if (name != attributeName) continue;
             ((float*)values.Data)[i] = value;
-            LogMessage("Admin: set attribute " + attributeName + " of " + identifier +
+            LogMessage("Admin: set attribute (attribut défini) " + attributeName + " of " + identifier +
                        " to " + std::to_string(value));
             return true;
         }
@@ -146,6 +149,11 @@ bool Engine::SetAttribute(const std::string& identifier,
 /// et notifie le système de santé) sur le game thread — l'écriture directe
 /// d'attribut ne marque pas la propriété « dirty » : le client ne voit pas
 /// le changement. Repli : écriture directe attribut + AuthoritativeHealth.
+/// EN: heals the player to max. Proper path = the game's native
+/// HealthComponent::IncreaseHealth (replicates and notifies the health
+/// system) on the game thread — a direct attribute write does not mark the
+/// replicated property dirty, so clients never see the change. Fallback:
+/// direct write to the attribute + AuthoritativeHealth.
 bool Engine::HealPlayer(const std::string& identifier, std::string& outError) const {
     if (!initialized) {
         outError = "engine not initialised";
@@ -185,14 +193,14 @@ bool Engine::HealPlayer(const std::string& identifier, std::string& outError) co
             bool ran = GameThread::RunSync(
                 [&]() { ok = NativeCall::Invoke(health, healFn, &params, 0x00); }, 5000);
             if (ran && ok) {
-                LogMessage("Admin: healed " + identifier + " by " +
-                           std::to_string(amount) + " (native IncreaseHealth)");
+                LogMessage("Admin: healed (soigné) " + identifier + " by " +
+                           std::to_string(amount) + " (native IncreaseHealth / natif)");
                 return true;
             }
-            LogMessage("Heal: native call refused/unavailable — direct write fallback");
+            LogMessage("Heal: native call refused/unavailable — direct write fallback — appel natif refusé/indisponible, repli en écriture directe");
         }
     } else if (amount <= 0.0f) {
-        LogMessage("Admin: " + identifier + " already at full health");
+        LogMessage("Admin: " + identifier + " already at full health — déjà à pleine santé");
         return true;
     }
 
@@ -203,8 +211,8 @@ bool Engine::HealPlayer(const std::string& identifier, std::string& outError) co
         Mem::WriteFloat(health + Offsets::Health_AuthoritativeHealth, player.maxHealth);
     }
     if (ok) {
-        LogMessage("Admin: healed " + identifier + " to " + std::to_string(player.maxHealth) +
-                   " (direct write)");
+        LogMessage("Admin: healed (soigné) " + identifier + " to " + std::to_string(player.maxHealth) +
+                   " (direct write / écriture directe)");
     }
     return ok;
 }
@@ -237,7 +245,7 @@ bool Engine::SetGodMode(const std::string& identifier, bool enabled,
         return false;
     }
     LogMessage("Admin: god mode " + std::string(enabled ? "ON" : "OFF") +
-               " for " + identifier);
+               " for (pour) " + identifier);
     return true;
 }
 
@@ -264,7 +272,7 @@ bool Engine::SetVital(const std::string& identifier, const char* componentName,
         return false;
     }
     LogMessage("Admin: " + std::string(componentName) + " of " + identifier +
-               " set to " + std::to_string(value));
+               " set to (réglé à) " + std::to_string(value));
     return true;
 }
 

@@ -179,13 +179,13 @@ uintptr_t FindPlayersChatComponent(Engine& engine, uintptr_t controller) {
         uintptr_t candidate = engine.GetObjectByIndex(i);
         if (!IsPlayersChatComponent(engine, candidate, controller)) continue;
         if (match && match != candidate) {
-            LogMessage("Chat: multiple chat components belong to controller; refusing ambiguous recipient");
+            LogMessage("Chat: multiple chat components belong to controller; refusing ambiguous recipient — plusieurs composants de chat pour ce contrôleur, destinataire ambigu refusé");
             return 0;
         }
         match = candidate;
     }
-    if (match) LogMessage("Chat: resolved recipient component by controller ownership (SDK offset did not validate)");
-    else LogMessage("Chat: no PlayerChatComponent found for recipient controller");
+    if (match) LogMessage("Chat: resolved recipient component by controller ownership (SDK offset did not validate) — composant du destinataire résolu par appartenance au contrôleur (offset SDK invalide)");
+    else LogMessage("Chat: no PlayerChatComponent found for recipient controller — aucun composant de chat trouvé pour le contrôleur du destinataire");
     return match;
 }
 
@@ -231,6 +231,11 @@ bool IsAdmin(uintptr_t controller) {
     // before the object array is fully populated (chat commands would
     // stay unavailable for the whole run). Resolve lazily on first use,
     // like items.cpp does for TryGiveItemToPlayer.
+    // FR : PrivilegeFunctionLibrary est un game feature enregistré tardivement :
+    // le lookup unique d'Initialize() peut le manquer si le mod démarre avant
+    // que le pool d'objets soit complet (les commandes chat resteraient
+    // inactives toute la run). Résolution paresseuse à la première
+    // utilisation, comme items.cpp pour TryGiveItemToPlayer.
     if (!g_AdminFunction) {
         g_AdminFunction =
             engine->FindFunction("PrivilegeFunctionLibrary", "ControllerIsOwnerOrAdmin");
@@ -436,7 +441,7 @@ void Poll() {
             std::lock_guard<std::mutex> lock(g_VTableMutex);
             g_HookedVTables[vtable] = previous;
         }
-        LogMessage("Chat: watching player events on " + engine->GetObjectClassName(component));
+        LogMessage("Chat: watching player events (surveille les événements joueurs) on " + engine->GetObjectClassName(component));
     }
 }
 
@@ -475,9 +480,9 @@ bool Initialize() {
 
     g_Hooked = true;
     g_Status = "hooked";
-    LogMessage("Chat: reading messages from PlayerChatComponent.Server_SendChatMessage");
-    if (!g_ReceiveFunction) LogMessage("Chat: Client_ReceiveChatMessage not found, broadcast unavailable");
-    if (!g_AdminFunction || !g_AdminLibrary) LogMessage("Chat: ControllerIsOwnerOrAdmin not found, chat commands unavailable");
+    LogMessage("Chat: reading messages (lecture des messages) from PlayerChatComponent.Server_SendChatMessage");
+    if (!g_ReceiveFunction) LogMessage("Chat: Client_ReceiveChatMessage not found, broadcast unavailable — introuvable, diffusion indisponible");
+    if (!g_AdminFunction || !g_AdminLibrary) LogMessage("Chat: ControllerIsOwnerOrAdmin not found, chat commands unavailable — introuvable, commandes chat indisponibles");
     return true;
 }
 
@@ -526,7 +531,7 @@ bool Broadcast(const std::string& body, std::string& outError) {
         return false;
     }
 
-    LogMessage("Chat: broadcast to " + std::to_string(delivered) + " player(s): " + body);
+    LogMessage("Chat: broadcast (diffusion) to " + std::to_string(delivered) + " player(s): " + body);
     return true;
 }
 

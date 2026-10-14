@@ -85,11 +85,11 @@ void InitThread() {
     GetActiveLogPath() = InitLogFile();
     Runtime::MarkStart();
 
-    LogMessage("RSDWRestAPI " + std::string(Runtime::Version()) + " loaded");
-    LogMessage("RSDWRestAPI: data directory " + GetBaseDir());
+    LogMessage("RSDWRestAPI " + std::string(Runtime::Version()) + " loaded (chargé)");
+    LogMessage("RSDWRestAPI: data directory (répertoire de données) " + GetBaseDir());
 
     if (!g_Config.rest.enabled && !g_Config.rcon.enabled) {
-        LogMessage("RSDWRestAPI: both listeners are disabled, nothing to do");
+        LogMessage("RSDWRestAPI: both listeners are disabled, nothing to do — les deux listeners sont désactivés, rien à faire");
         return;
     }
 
@@ -101,7 +101,7 @@ void InitThread() {
         int waitSeconds = attempt < 10 ? 1 : (attempt < 30 ? 5 : 30);
 
         if (attempt == 1) {
-            LogMessage("RSDWRestAPI: waiting for the engine to finish loading");
+            LogMessage("RSDWRestAPI: waiting for the engine to finish loading — en attente de la fin du chargement du moteur");
         }
 
         for (int i = 0; i < waitSeconds * 10 && !g_Shutdown; i++) {
@@ -115,9 +115,14 @@ void InitThread() {
         // appliqué à tout le service (wrapper .sh, helpers), le premier
         // processus à se lier au port REST serait sinon un processus SANS
         // moteur — /api/health répondrait engineReady=false pour toujours.
+        // EN: patch (MIT, private use) — listeners start ONLY in the process
+        // where the game engine initialized. With a service-wide LD_PRELOAD
+        // (wrapper .sh, helpers), the first process to bind the REST port
+        // would otherwise be one WITHOUT an engine — /api/health would
+        // answer engineReady=false forever.
         StartListeners();
         atexit(&ShutdownListeners);
-        LogMessage("RSDWRestAPI: engine ready, endpoints are live");
+        LogMessage("RSDWRestAPI: engine ready, endpoints are live — moteur prêt, endpoints actifs");
 
         NativeCall::LogImageSymbolReport();
 
@@ -157,7 +162,7 @@ void InitThread() {
                 if (it != deathPosted.end() && now - it->second < std::chrono::seconds(10)) return;
                 deathPosted[key] = now;
             }
-            LogMessage("Deaths: " + name + " died" + (where.empty() ? "" : " at " + where));
+            LogMessage("Deaths: " + name + " died (est mort)" + (where.empty() ? "" : " at " + where));
             if (Discord::IsEnabled(Discord::Channel::Deaths)) {
                 Discord::Post(Discord::Channel::Deaths,
                               ":skull: **" + name + "** died" + (where.empty() ? "" : " at `" + where + "`"));

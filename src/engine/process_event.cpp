@@ -237,7 +237,7 @@ void LearnFrameLayout(void* frame, void* context) {
     }
 
     if (!node || !propertyChain) {
-        LogMessage("GameThread: could not recover the FFrame layout; thunk calls stay disabled");
+        LogMessage("GameThread: could not recover the FFrame layout; thunk calls stay disabled — layout FFrame introuvable, appels de thunks désactivés");
         return;
     }
 
@@ -248,7 +248,7 @@ void LearnFrameLayout(void* frame, void* context) {
     g_OffPropertyChain = propertyChain;
     g_LayoutReady = true;
 
-    LogMessage("GameThread: FFrame layout learned - Node +" + HexString(g_OffNode) +
+    LogMessage("GameThread: FFrame layout learned (layout FFrame apprise) - Node +" + HexString(g_OffNode) +
                ", Object +" + HexString(g_OffObject) +
                ", Code +" + HexString(g_OffCode) +
                ", Locals +" + HexString(g_OffLocals) +
@@ -334,13 +334,13 @@ void DeriveProcessEvent() {
         g_ProcessEvent = candidate;
         g_Original = (ProcessEventFn)candidate;
         g_VTableIndex = index;
-        LogMessage("GameThread: ProcessEvent derived at " + HexString(candidate) +
+        LogMessage("GameThread: ProcessEvent derived (dérivé) at " + HexString(candidate) +
                    " (vtable slot " + std::to_string(index) + ", from stack return address " +
                    HexString(value) + ")");
         return;
     }
 
-    LogMessage("GameThread: could not identify ProcessEvent by walking the pump stack; "
+    LogMessage("GameThread: could not identify ProcessEvent by walking the pump stack; — identification impossible par la marche de pile ; "
                "replicated calls stay disabled");
 }
 
@@ -392,7 +392,7 @@ bool InstallExecPump() {
 
         g_Ready = true;
         g_Status = std::string("exec-pump on PlayerController.") + name;
-        LogMessage("GameThread: pump installed on PlayerController." + std::string(name) +
+        LogMessage("GameThread: pump installed (installé) on PlayerController." + std::string(name) +
                    " (original thunk " + HexString(original) + ")");
         return true;
     }
@@ -437,15 +437,15 @@ bool Initialize(uintptr_t moduleBase, uintptr_t moduleEnd) {
     if (address && address >= moduleBase && address < moduleEnd) {
         g_ProcessEvent = address;
         g_Status = source;
-        LogMessage("GameThread: ProcessEvent found via " + source + " at " + HexString(address));
+        LogMessage("GameThread: ProcessEvent found (trouvé) via " + source + " at " + HexString(address));
     } else {
         if (address) {
-            LogMessage("GameThread: symbol lookup returned " + HexString(address) +
+            LogMessage("GameThread: symbol lookup returned (recherche de symbole a retourné) " + HexString(address) +
                        ", which is outside the image " + HexString(moduleBase) + " - " +
                        HexString(moduleEnd) + "; ignoring it");
         }
         g_Status = "ProcessEvent not found in .dynsym or .symtab";
-        LogMessage("GameThread: " + g_Status + " - kick and every other UFunction "
+        LogMessage("GameThread: " + g_Status + " - kick and every other UFunction — kick et toute fonctionnalité adossée à UFunction "
                    "backed feature stays disabled");
         return false;
     }
@@ -487,7 +487,7 @@ bool Initialize(uintptr_t moduleBase, uintptr_t moduleEnd) {
     (void)objectClass;
     g_Ready = true;
     g_Status = "ready (" + g_Status + ", vtable slot " + std::to_string(g_VTableIndex) + ")";
-    LogMessage("GameThread: ProcessEvent at " + HexString(g_ProcessEvent) +
+    LogMessage("GameThread: ProcessEvent at (à) " + HexString(g_ProcessEvent) +
                ", pump installed at vtable slot " + std::to_string(g_VTableIndex));
     return true;
 }
