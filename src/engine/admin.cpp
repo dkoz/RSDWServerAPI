@@ -11,8 +11,8 @@ namespace DomEngine {
 
 namespace {
 
-// Même recouvrement par appartenance que GetAllPlayers : l'offset SDK direct
-// peut bouger entre les builds, l'appartenance (Outer) ne ment pas.
+// Ownership-based recovery, same as GetAllPlayers: the SDK offset can
+// move between builds; Outer ownership does not lie.
 uintptr_t FindOwnedComponent(const Engine* engine, uintptr_t owner,
                              const char* className) {
     if (!owner) return 0;
@@ -74,7 +74,7 @@ bool Resolve(const Engine* engine, const std::string& identifier,
 
 }
 
-/// Fixe la valeur d'un ATTRIBUT (ex. « Health ») d'un joueur.
+/// Sets a float ATTRIBUTE (e.g. "Health") on a player.
 bool Engine::SetAttribute(const std::string& identifier,
                           const std::string& attributeName, float value,
                           std::string& outError) const {
@@ -101,12 +101,8 @@ bool Engine::SetAttribute(const std::string& identifier,
 
     FUEArray attributes = {};
     FUEArray values = {};
-    // Même recouvrement que la lecture des joueurs : les attributs peuvent
-    // vivre dans la paire « partagée » (SharedFloatAttributes/SharedAttributeValues),
-    // pas seulement dans la paire normale.
-    // EN: same coverage as the player scan — attributes may live in the
-    // "shared" pair (SharedFloatAttributes/SharedAttributeValues), not only
-    // in the plain pair.
+    // Same coverage as the player scan: attributes may live in the
+    // "shared" pair (SharedFloatAttributes/SharedAttributeValues).
     for (int pass = 0; pass < 2; pass++) {
         uintptr_t attrsOffset = pass == 0 ? Offsets::Attributes_FloatAttributes
                                           : Offsets::Attributes_SharedFloatAttributes;
@@ -144,16 +140,9 @@ bool Engine::SetAttribute(const std::string& identifier,
     return false;
 }
 
-/// Remet la santé du joueur à son maximum.
-/// Voie propre = la native du jeu HealthComponent::IncreaseHealth (réplique
-/// et notifie le système de santé) sur le game thread — l'écriture directe
-/// d'attribut ne marque pas la propriété « dirty » : le client ne voit pas
-/// le changement. Repli : écriture directe attribut + AuthoritativeHealth.
-/// EN: heals the player to max. Proper path = the game's native
-/// HealthComponent::IncreaseHealth (replicates and notifies the health
-/// system) on the game thread — a direct attribute write does not mark the
-/// replicated property dirty, so clients never see the change. Fallback:
-/// direct write to the attribute + AuthoritativeHealth.
+/// Heals to max via the game's native HealthComponent::IncreaseHealth on
+/// the game thread (replicated, notifies the health system). Direct attribute
+/// writes bypass replication; fallback writes attribute + AuthoritativeHealth.
 bool Engine::HealPlayer(const std::string& identifier, std::string& outError) const {
     if (!initialized) {
         outError = "engine not initialised";
@@ -204,8 +193,8 @@ bool Engine::HealPlayer(const std::string& identifier, std::string& outError) co
         return true;
     }
 
-    // Repli (et synchronisation) : écriture directe de l'attribut partagé
-    // « Health » + du champ AuthoritativeHealth du composant.
+    // Fallback: direct write of the shared "Health" attribute plus the
+    // component's AuthoritativeHealth.
     bool ok = SetAttribute(identifier, "Health", player.maxHealth, outError);
     if (health && Mem::Readable((void*)health, 0x1B8)) {
         Mem::WriteFloat(health + Offsets::Health_AuthoritativeHealth, player.maxHealth);
@@ -217,7 +206,7 @@ bool Engine::HealPlayer(const std::string& identifier, std::string& outError) co
     return ok;
 }
 
-/// Bascule `bCanDie` du composant de santé (god mode).
+/// Toggles `bCanDie` on the health component (god mode).
 bool Engine::SetGodMode(const std::string& identifier, bool enabled,
                         std::string& outError) const {
     if (!initialized) {
@@ -239,7 +228,7 @@ bool Engine::SetGodMode(const std::string& identifier, bool enabled,
         outError = "health component not found";
         return false;
     }
-    // Écriture directe d'un booléen : simple et réversible.
+    // Direct bool write: simple and reversible.
     if (!Mem::WriteU8(health + Offsets::Health_bCanDie, enabled ? 0 : 1)) {
         outError = "health component not writable";
         return false;
@@ -249,7 +238,7 @@ bool Engine::SetGodMode(const std::string& identifier, bool enabled,
     return true;
 }
 
-/// Règle Sustenance ou Hydration d'un joueur (composants recouvrés).
+/// Sets Sustenance or Hydration (components recovered by ownership).
 bool Engine::SetVital(const std::string& identifier, const char* componentName,
                       float value, std::string& outError) const {
     if (!initialized) {
@@ -276,7 +265,7 @@ bool Engine::SetVital(const std::string& identifier, const char* componentName,
     return true;
 }
 
-/// Nourrit le joueur à 100 % (Sustenance = CurrentMax).
+/// Feeds the player to 100% (Sustenance = CurrentMax).
 bool Engine::FeedPlayer(const std::string& identifier, std::string& outError) const {
     PlayerInfo player;
     if (!Resolve(this, identifier, player, outError)) return false;
@@ -286,7 +275,7 @@ bool Engine::FeedPlayer(const std::string& identifier, std::string& outError) co
     return SetVital(identifier, "SustenanceComponent", max, outError);
 }
 
-/// Hydrate le joueur à 100 % (Hydration = CurrentMax).
+/// Hydrates the player to 100% (Hydration = CurrentMax).
 bool Engine::HydratePlayer(const std::string& identifier, std::string& outError) const {
     PlayerInfo player;
     if (!Resolve(this, identifier, player, outError)) return false;

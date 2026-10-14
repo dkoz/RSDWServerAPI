@@ -110,16 +110,10 @@ void InitThread() {
     }
 
     if (!g_Shutdown && DomEngine::g_Engine->IsInitialized()) {
-        // Patch (MIT, usage privé) : les listeners ne démarrent QUE dans le
-        // processus où le moteur du jeu s'est initialisé. Sous LD_PRELOAD
-        // appliqué à tout le service (wrapper .sh, helpers), le premier
-        // processus à se lier au port REST serait sinon un processus SANS
-        // moteur — /api/health répondrait engineReady=false pour toujours.
-        // EN: patch (MIT, private use) — listeners start ONLY in the process
-        // where the game engine initialized. With a service-wide LD_PRELOAD
-        // (wrapper .sh, helpers), the first process to bind the REST port
-        // would otherwise be one WITHOUT an engine — /api/health would
-        // answer engineReady=false forever.
+        // Listeners start ONLY in the process where the game engine
+        // initialized: with a service-wide LD_PRELOAD, the first process to
+        // bind the REST port would otherwise be one WITHOUT an engine.
+        // /api/health would answer engineReady=false forever.
         StartListeners();
         atexit(&ShutdownListeners);
         LogMessage("RSDWRestAPI: engine ready, endpoints are live — moteur prêt, endpoints actifs");

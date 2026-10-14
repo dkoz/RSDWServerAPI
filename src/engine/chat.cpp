@@ -171,9 +171,8 @@ uintptr_t FindPlayersChatComponent(Engine& engine, uintptr_t controller) {
     uintptr_t component = Mem::ReadPtr(controller + kControllerChatComponent);
     if (IsPlayersChatComponent(engine, component, controller)) return component;
 
-    // Les membres du contrôleur peuvent bouger entre les builds : n'utiliser
-    // qu'un composant de chat APPARTENANT à ce contrôleur, jamais un objet
-    // arbitraire lisible.
+    // Controller members can move between builds: only use a chat
+    // component OWNED by this controller, never an arbitrary readable one.
     uintptr_t match = 0;
     for (int32_t i = 0, count = engine.GetObjectCount(); i < count; ++i) {
         uintptr_t candidate = engine.GetObjectByIndex(i);
@@ -226,16 +225,8 @@ bool IsAdmin(uintptr_t controller) {
     Engine* engine = g_Engine;
     if (!engine || !engine->IsInitialized()) return false;
 
-    // PrivilegeFunctionLibrary is a late-registered game feature: the
-    // one-shot lookup in Initialize() can miss it when the mod boots
-    // before the object array is fully populated (chat commands would
-    // stay unavailable for the whole run). Resolve lazily on first use,
-    // like items.cpp does for TryGiveItemToPlayer.
-    // FR : PrivilegeFunctionLibrary est un game feature enregistré tardivement :
-    // le lookup unique d'Initialize() peut le manquer si le mod démarre avant
-    // que le pool d'objets soit complet (les commandes chat resteraient
-    // inactives toute la run). Résolution paresseuse à la première
-    // utilisation, comme items.cpp pour TryGiveItemToPlayer.
+    // Late-registered game feature: the one-shot Initialize() lookup can
+    // miss it at boot. Resolve lazily on first use, like items.cpp.
     if (!g_AdminFunction) {
         g_AdminFunction =
             engine->FindFunction("PrivilegeFunctionLibrary", "ControllerIsOwnerOrAdmin");
@@ -394,10 +385,9 @@ void SendThunk(void* context, void* frame, void* result) {
 
 }
 
-// Défini ici — et non dans le namespace anonyme ci-dessus — car chat.h le
-// déclare avec liaison externe : une définition interne serait invisible à
-// l'édition de liens et provoquerait un « symbol lookup error » au premier
-// appel (crash du processus de jeu).
+// Defined here (not in the anonymous namespace) because chat.h declares
+// it with external linkage — an internal definition would break at link
+// time with a symbol lookup error (crashing the game process).
 bool SendToPlayer(const DomEngine::PlayerInfo& player, const std::string& body) {
     return SendToPlayerInternal(player, body);
 }

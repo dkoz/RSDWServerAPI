@@ -11,21 +11,16 @@ namespace DomEngine {
 
 namespace {
 
-// Résolues une seule fois (les noms ne bougent pas entre les builds, seuls
-// les offsets d'image bougent — et le pool d'objets est recouvré par le
-// scan de segments).
+// Resolved once: names survive builds; image offsets move (the segment
+// scan recovers the object pool).
 uintptr_t g_TeleportFn = 0;
 uintptr_t g_TeleportRetOffset = 0x38;
 
 uintptr_t ResolveTeleportFunction(const Engine* engine) {
     if (g_TeleportFn) return g_TeleportFn;
 
-    // Build 1.0.1 (CL 248854) : AActor::TeleportTo n'est plus enregistré
-    // comme UFunction dans le pool d'objets — le wrapper BlueprintCallable
-    // est K2_TeleportTo (vérifié en mémoire sur le serveur de prod).
-    // EN: on build 1.0.1 (CL 248854), AActor::TeleportTo is no longer a
-    // registered UFunction in the object pool — the BlueprintCallable
-    // wrapper is K2_TeleportTo (verified in memory on the prod server).
+    // Build 1.0.1: AActor::TeleportTo is no longer a registered UFunction;
+    // the BlueprintCallable wrapper is K2_TeleportTo.
     g_TeleportFn = engine->FindFunction("Actor", "TeleportTo");
     g_TeleportRetOffset = 0x38;
     if (!g_TeleportFn) {
@@ -42,8 +37,7 @@ uintptr_t ResolveTeleportFunction(const Engine* engine) {
     return g_TeleportFn;
 }
 
-// Écriture directe de la localisation du RootComponent (repli sans appel
-// natif, et mécanique des SNAPSHOTS : la prochaine réplication l'emporte).
+// Direct RootComponent write fallback; replication snapshots win next tick.
 void WriteDoubleTriple(uintptr_t address, double a, double b, double c) {
     if (!Mem::Readable((void*)address, sizeof(double) * 3)) return;
     double values[3] = {a, b, c};
@@ -52,7 +46,7 @@ void WriteDoubleTriple(uintptr_t address, double a, double b, double c) {
 
 } // anonymous namespace
 
-/// Téléporte `identifier` aux coordonnées absolues (x, y, z).
+/// Teleports `identifier` to absolute world coordinates (x, y, z).
 bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
                               double z, std::string& outError) const {
     if (!initialized) {
@@ -77,8 +71,8 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
     if (fn) {
         // Params de Actor::TeleportTo(FVector, FRotator, bool, bool) :
         // 0x00 DestLocation (3 doubles), 0x18 DestRotation (3 doubles),
-        // 0x30 bIsATest, 0x31 bNoCheck, retour aligné 8 → 0x38.
-        // K2_TeleportTo(FVector, FRotator) : mêmes offsets, retour bool en 0x30.
+        // TeleportTo: loc 0x00, rot 0x18, bIsATest 0x30, bNoCheck 0x31,
+        // bool return 0x38. K2_TeleportTo: same layout, bool return at 0x30.
         uint8_t params[0x100];
         memset(params, 0, sizeof(params));
         double* loc = (double*)(params + 0x00);
@@ -86,12 +80,9 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
         loc[0] = x; loc[1] = y; loc[2] = z;
         rot[0] = player.pitch; rot[1] = player.yaw; rot[2] = player.roll;
 
-        // Le handler REST tourne sur le thread HTTP : les natives UE
-        // s'exécutent sur le game thread. On passe par la file du pump
-        // (drainée quand une RPC de joueur arrive) — comme Broadcast().
-        // EN: the REST handler runs on the HTTP thread; UE natives must
-        // run on the game thread. Marshalled through the pump queue
-        // (drained when a player RPC arrives) — like Broadcast().
+        // REST handler runs on the HTTP thread; UE natives must run on the
+        // game thread. Marshalled via the pump queue (drained on player RPC),
+        // like Broadcast().
         bool ok = false;
         bool ran = GameThread::RunSync(
             [&]() { ok = NativeCall::Invoke(player.pawnPtr, fn, params, g_TeleportRetOffset); },
@@ -117,7 +108,7 @@ bool Engine::TeleportToCoords(const std::string& identifier, double x, double y,
     return true;
 }
 
-/// Téléporte `from` sur la position de `to`.
+/// Teleports `from` onto `to`'s position.
 bool Engine::TeleportPlayer(const std::string& from, const std::string& to,
                             std::string& outError) const {
     if (!initialized) {

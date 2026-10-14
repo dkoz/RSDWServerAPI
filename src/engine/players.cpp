@@ -311,7 +311,7 @@ std::vector<PlayerInfo> Engine::GetAllPlayers() const {
         }
     }
 
-    // Compétences : composant possédé par le CONTRÔLEUR (pas le pawn).
+    // Skills live on the CONTROLLER-owned component, not the pawn.
     std::unordered_set<uintptr_t> controllerSet;
     for (const PlayerInfo& info : players) {
         if (info.controllerPtr) controllerSet.insert(info.controllerPtr);

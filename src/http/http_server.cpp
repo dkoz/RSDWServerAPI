@@ -169,9 +169,6 @@ std::string HttpServer::ParseRequest(int clientSocket, HttpRequest& req) {
         // Header names are case-insensitive (RFC 9110). Store them
         // lowercase so lookups work with clients that send
         // "authorization" (reqwest/hyper and friends).
-        // FR : les noms d'en-têtes sont insensibles à la casse (RFC 9110).
-        // Stockés en minuscules pour que les clients qui envoient
-        // « authorization » (reqwest/hyper et consorts) soient trouvés.
         std::transform(key.begin(), key.end(), key.begin(),
                        [](unsigned char c) { return (char)std::tolower(c); });
         req.headers[key] = val;

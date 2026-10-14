@@ -36,7 +36,7 @@ void AddEventListener(EventListener listener);
 void Poll();
 
 bool Broadcast(const std::string& body, std::string& outError);
-// Message privé à UN joueur (composant de chat résolu par appartenance).
+// Private message to ONE player (chat component resolved by ownership).
 bool SendToPlayer(const DomEngine::PlayerInfo& player, const std::string& body);
 bool Tell(const std::string& identifier, const std::string& body,
           std::string& outError);

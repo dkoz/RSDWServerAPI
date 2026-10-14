@@ -42,8 +42,8 @@ inline int32_t ReadI32(uintptr_t addr, int32_t fallback = 0) {
     return value;
 }
 
-// Écritures prudentes : la cible doit être LISIBLE avant toute écriture.
-// Utilisées uniquement sur des composants VALIDÉS (IsA + appartenance) —
+// Cautious writes: the target must be READABLE first. Only used on
+// VALIDATED components (IsA + ownership) —
 // jamais sur des offsets aveugles.
 inline bool WriteU8(uintptr_t addr, uint8_t value) {
     if (!Readable((void*)addr, 1)) return false;

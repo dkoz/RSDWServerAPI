@@ -113,7 +113,7 @@ void RegisterPlayers(HttpServer& server) {
         std::string error;
         float amount = 0.0f;
         if (Json::GetFloat(req.body, "amount", amount) && amount > 0.0f) {
-            // Soin PARTIEL : Health += amount, borné à MaxHealth.
+            // Partial heal: Health += amount, clamped to MaxHealth.
             DomEngine::PlayerInfo info;
             std::string matchedBy;
             if (!DomEngine::g_Engine->ResolvePlayerIdentifier(player, info, matchedBy, error)) {

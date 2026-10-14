@@ -24,11 +24,7 @@ namespace DomEngine {
 namespace Offsets {
 
 // Image offsets - Source: RSDWSDK/Dumpspace/OffsetsInfo.json
-// Offsets d'image — source : RSDWSDK/Dumpspace/OffsetsInfo.json.
-// Build 247725 (2026-10-11) : GNames 0x0DB7EFF8, GObjects 0x0DC3A510.
-// Build 1.0.1 (CL 248854, 2026-10-14), vérifiés en live sur le serveur de
-// production par le scan de segments du mod (base 0x200000) :
-// GNames 0xDDDAFF8, GObjects 0xDE96510.
+// Build 247725 (2026-10-11): GNames 0x0DB7EFF8, GObjects 0x0DC3A510.
 // Build 1.0.1 (CL 248854, 2026-10-14), verified live on the production
 // server via the mod's segment scan (base 0x200000):
 // GNames 0xDDDAFF8, GObjects 0xDE96510.
@@ -46,7 +42,6 @@ constexpr int32_t   ObjectsPerChunk      = 0x10000;
 constexpr uintptr_t ObjectItem_Size      = 0x18;
 
 // FNamePool - Source: RSDWSDK/CppSDK/SDK/Basic.hpp (FNamePool, FNameEntry)
-// FNamePool — source : RSDWSDK/CppSDK/SDK/Basic.hpp (FNamePool, FNameEntry).
 constexpr uintptr_t NamePool_CurrentBlock      = 0x00;
 constexpr uintptr_t NamePool_CurrentByteCursor = 0x04;
 constexpr uintptr_t NamePool_Blocks            = 0x08;
@@ -55,7 +50,6 @@ constexpr int32_t   NameEntryStride            = 2;
 constexpr int32_t   NamePool_MaxBlocks         = 0x2000;
 
 // UObject / UStruct / UClass - Source: RSDWSDK/CppSDK/Assertions.inl
-// UObject / UStruct / UClass — source : RSDWSDK/CppSDK/Assertions.inl.
 constexpr uintptr_t UObject_Flags     = 0x08;
 constexpr uintptr_t UObject_Index     = 0x0C;
 constexpr uintptr_t UObject_Class     = 0x10;
@@ -262,10 +256,8 @@ struct DiscoveryInfo {
     int32_t objectCount = 0;
 };
 
-// Composants du joueur résolus par appartenance (l'offset SDK direct peut
-// bouger entre les builds : le scan par Outer sert de recouvrement).
-// Player components resolved by ownership (the direct SDK offset can move
-// between builds: the Outer scan is the recovery path).
+// Player components resolved by ownership (the SDK offset can move
+// between builds; the Outer scan is the recovery path).
 struct PawnComponents {
     uintptr_t sustenance = 0;
     uintptr_t hydration = 0;
@@ -336,8 +328,8 @@ public:
     bool TeleportPlayer(const std::string& from, const std::string& to,
                         std::string& outError) const;
 
-    // Résolution d'un identifiant de joueur (playerId, netId, characterGuid,
-    // characterName, name) — partagée par le téléport et les routes.
+    // Player identifier resolution (playerId, netId, characterGuid,
+    // characterName, name) — shared by teleport and routes.
     bool ResolvePlayerIdentifier(const std::string& identifier, PlayerInfo& out,
                                  std::string& matchedBy, std::string& outError) const;
     bool SetAttribute(const std::string& identifier,
