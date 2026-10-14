@@ -86,54 +86,6 @@ void RegisterPlayerCommands() {
               }});
 
 
-    Register({"tell", "tell <player> <message>", "Send a private message to a player.",
-              [](const std::vector<std::string>& args) -> std::string {
-                  if (args.size() < 3) return "usage: tell <player> <message>";
-                  std::string message;
-                  for (size_t i = 2; i < args.size(); i++) {
-                      if (i > 2) message += " ";
-                      message += args[i];
-                  }
-                  std::string error;
-                  if (!DomChat::Tell(args[1], message, error)) return "tell failed: " + error;
-                  return "message sent to " + args[1];
-              }});
-
-    Register({"heal", "heal <player>", "Restore a player's health to maximum.",
-              [](const std::vector<std::string>& args) -> std::string {
-                  if (args.size() < 2) return "usage: heal <player>";
-                  std::string error;
-                  if (!DomEngine::g_Engine->HealPlayer(args[1], error)) return "heal failed: " + error;
-                  return "healed " + args[1];
-              }});
-
-    Register({"feed", "feed <player>", "Restore a player's sustenance to maximum.",
-              [](const std::vector<std::string>& args) -> std::string {
-                  if (args.size() < 2) return "usage: feed <player>";
-                  std::string error;
-                  if (!DomEngine::g_Engine->FeedPlayer(args[1], error)) return "feed failed: " + error;
-                  return "fed " + args[1];
-              }});
-
-    Register({"hydrate", "hydrate <player>", "Restore a player's hydration to maximum.",
-              [](const std::vector<std::string>& args) -> std::string {
-                  if (args.size() < 2) return "usage: hydrate <player>";
-                  std::string error;
-                  if (!DomEngine::g_Engine->HydratePlayer(args[1], error)) return "hydrate failed: " + error;
-                  return "hydrated " + args[1];
-              }});
-
-    Register({"godmode", "godmode <player> <on|off>", "Toggle a player's ability to die.",
-              [](const std::vector<std::string>& args) -> std::string {
-                  if (args.size() < 2) return "usage: godmode <player> <on|off>";
-                  bool on = true;
-                  if (args.size() >= 3 && args[2] == "off") on = false;
-                  std::string error;
-                  if (!DomEngine::g_Engine->SetGodMode(args[1], on, error)) return "godmode failed: " + error;
-                  return std::string("god mode ") + (on ? "ON" : "OFF") + " for " + args[1];
-              }});
-
-
     Register({"tp", "tp <player> <target>", "Teleport a player onto another player.",
               [](const std::vector<std::string>& args) -> std::string {
                   if (args.size() < 3) return "usage: tp <player> <target>";
