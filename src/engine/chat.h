@@ -33,6 +33,8 @@ void AddEventListener(EventListener listener);
 
 void Poll();
 
-bool Broadcast(const std::string& body, std::string& outError);
+// Returns true once the message was dispatched to at least one player. Dispatch is not
+// confirmation of display - the game sends no acknowledgement for a client RPC.
+bool Broadcast(const std::string& body, std::string& outError, int* outDelivered = nullptr);
 
 }

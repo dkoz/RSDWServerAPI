@@ -1,5 +1,6 @@
 set_project("rsdw-serverapi")
-set_version("0.1.4")
+-- Keep in step with src/version.h (the runtime reads that, not this).
+set_version("0.1.5")
 
 add_rules("mode.release")
 set_languages("c++17")
@@ -31,7 +32,8 @@ target("rsdwapi")
               "src/rcon/rcon_commands.cpp",
               "src/rcon/commands_system.cpp",
               "src/rcon/commands_players.cpp",
-              "src/utils/memory.cpp")
+              "src/utils/memory.cpp",
+              "src/utils/glibc_compat.cpp")
     add_headerfiles("src/**.h")
     add_includedirs("src")
     set_filename("librsdwapi.so")

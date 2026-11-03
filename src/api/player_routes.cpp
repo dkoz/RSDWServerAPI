@@ -77,8 +77,10 @@ void RegisterPlayers(HttpServer& server) {
         std::string line = sender.empty() ? message : "[" + sender + "] " + message;
 
         std::string error;
-        if (!DomChat::Broadcast(line, error)) return Error(500, error);
-        return Ok("broadcast sent");
+        int dispatched = 0;
+        if (!DomChat::Broadcast(line, error, &dispatched)) return Error(500, error);
+        // "dispatched": the server has no way to confirm a client displayed it.
+        return Ok("broadcast dispatched to " + std::to_string(dispatched) + " player(s)");
     });
 
     server.Post("/api/give", [](const HttpRequest& req) -> HttpResponse {

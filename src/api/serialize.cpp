@@ -95,6 +95,14 @@ std::string Player(const DomEngine::PlayerInfo& p) {
         oss << "\"hydration\":null,";
     }
 
+    if (p.hasEndurance) {
+        oss << "\"endurance\":{\"current\":" << Num(p.endurance) << ",\"max\":";
+        if (p.hasMaxEndurance) oss << Num(p.maxEndurance); else oss << "null";
+        oss << ",\"source\":" << Q(p.enduranceSource) << "},";
+    } else {
+        oss << "\"endurance\":null,";
+    }
+
     oss << "\"attributes\":[";
     for (size_t i = 0; i < p.attributes.size(); i++) {
         if (i) oss << ",";

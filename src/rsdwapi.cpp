@@ -20,11 +20,34 @@
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
+#include <unistd.h>
 
 APIConfig g_Config;
 
 namespace {
+
+// LD_PRELOAD is inherited by every process the panel starts: bash running the startup line,
+// the stock RSDragonwildsServer.sh wrapper, crash reporters. Before this check each of them
+// loaded the mod, and whichever bound the REST port first won - usually the wrapper, so
+// /api/health reported engineReady=false forever (PR #3). Only the server binary itself
+// gets listeners. RSDWAPI_FORCE=1 overrides, for testing or a renamed binary.
+bool IsTargetProcess() {
+    const char* force = getenv("RSDWAPI_FORCE");
+    if (force && force[0] == '1') return true;
+
+    char exe[4096] = {};
+    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (len <= 0) return false;
+
+    std::string path(exe, (size_t)len);
+    size_t slash = path.find_last_of('/');
+    std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    return name.rfind("RSDragonwildsServer", 0) == 0 &&
+           name.find(".sh") == std::string::npos;
+}
 
 HttpServer* g_HttpServer = nullptr;
 Rcon::Server* g_RconServer = nullptr;
@@ -80,6 +103,7 @@ void InitThread() {
     APIConfig::EnsureConfigDirectory();
     std::string configPath = APIConfig::GetConfigPath();
     if (!g_Config.Load(configPath)) g_Config.GenerateSecrets();
+    std::vector<std::string> fromEnv = g_Config.ApplyEnvironment();
     g_Config.Save(configPath);
 
     GetActiveLogPath() = InitLogFile();
@@ -87,6 +111,11 @@ void InitThread() {
 
     LogMessage("RSDWRestAPI " + std::string(Runtime::Version()) + " loaded");
     LogMessage("RSDWRestAPI: data directory " + GetBaseDir());
+    if (!fromEnv.empty()) {
+        std::string names;
+        for (const std::string& name : fromEnv) names += (names.empty() ? "" : ", ") + name;
+        LogMessage("RSDWRestAPI: settings from environment: " + names);
+    }
 
     StartListeners();
     atexit(&ShutdownListeners);
@@ -117,14 +146,25 @@ void InitThread() {
 
         NativeCall::LogImageSymbolReport();
 
+        // The game-thread pump and the chat hook both depend on classes that can register
+        // after the engine itself is up. Each used to get exactly one attempt; a miss
+        // disabled kicks, broadcasts and chat relay until restart (issue #6). They are now
+        // retried from the main loop below until they succeed.
         DomEngine::DiscoveryInfo discovery = DomEngine::g_Engine->GetDiscoveryInfo();
-        if (!GameThread::Initialize(discovery.moduleBase, discovery.moduleEnd) &&
-            !GameThread::InstallExecPump()) {
-            LogMessage("RSDWRestAPI: kick disabled - " + GameThread::Status());
-            return;
-        }
+        auto tryPump = [&]() -> bool {
+            return GameThread::IsReady() ||
+                   GameThread::Initialize(discovery.moduleBase, discovery.moduleEnd) ||
+                   GameThread::InstallExecPump();
+        };
 
-        DomChat::Initialize();
+        bool pumpReady = tryPump();
+        if (!pumpReady) {
+            LogMessage("RSDWRestAPI: game-thread pump not available yet (" + GameThread::Status() +
+                       "); kick, give and broadcast wait for it, retrying every 15s");
+        }
+        bool chatReady = pumpReady && DomChat::Initialize();
+        auto lastRetry = std::chrono::steady_clock::now();
+        constexpr auto kRetryInterval = std::chrono::seconds(15);
 
         if (g_Config.discord.enabled) {
             Discord::Start(Discord::Channel::Chat, g_Config.discord.webhookUrl, g_Config.discord.username);
@@ -189,6 +229,15 @@ void InitThread() {
             }
             if (g_Shutdown) break;
 
+            auto now = std::chrono::steady_clock::now();
+            if ((!pumpReady || !chatReady) && now - lastRetry >= kRetryInterval) {
+                lastRetry = now;
+                if (!pumpReady && (pumpReady = tryPump())) {
+                    LogMessage("RSDWRestAPI: game-thread pump installed (" + GameThread::Status() + ")");
+                }
+                if (pumpReady && !chatReady) chatReady = DomChat::Initialize();
+            }
+
             DomEngine::g_Engine->EnforceKicks();
             DomBans::Enforce();
             DomChat::Poll();
@@ -212,13 +261,18 @@ void InitThread() {
     }
 }
 
+bool g_Active = false;
+
 }
 
 extern "C" __attribute__((constructor)) void RSDWApiLoad() {
+    if (!IsTargetProcess()) return;
+    g_Active = true;
     g_InitThread = new std::thread(InitThread);
 }
 
 extern "C" __attribute__((destructor)) void RSDWApiUnload() {
+    if (!g_Active) return;
     g_Shutdown = true;
     Runtime::BeginShutdown();
 }

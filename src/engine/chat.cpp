@@ -8,6 +8,7 @@
 #include "../utils/memory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <map>
@@ -34,8 +35,18 @@ constexpr size_t    kMessageSize   = 0x88;
 constexpr uintptr_t kEventTag  = 0x78;
 constexpr size_t    kEventSize = 0x80;
 
-// ADominionPlayerController::PlayerChatComponent - Source: Assertions.inl
-constexpr uintptr_t kControllerChatComponent = 0x1288;
+// ADominionPlayerController::PlayerChatComponent.
+//
+// This used to be a single hardcoded offset (0x1288). After the 1.0 / 10-14 patches that
+// slot holds BuildInteractionComponent instead, so Client_ReceiveChatMessage was being
+// called on the wrong component and broadcasts silently went nowhere (issues #5, #6).
+// The offset is now discovered at runtime per controller class and every read is
+// validated with IsA("PlayerChatComponent"). These are only hints, tried first because
+// they are cheap - a hint that does not validate is ignored, never trusted.
+constexpr uintptr_t kChatComponentHints[] = {0x12E0, 0x1288};
+constexpr uintptr_t kControllerScanStart = 0x228;  // past AActor's own members
+constexpr uintptr_t kControllerScanLimit = 0x4000;  // sanity cap on the reflected size
+constexpr const char* kChatComponentClass = "PlayerChatComponent";
 
 typedef void (*ExecThunk)(void* context, void* frame, void* result);
 
@@ -43,14 +54,27 @@ constexpr uintptr_t kExecFunction = 0xD8;
 
 ExecThunk g_OriginalSend = nullptr;
 uintptr_t g_SendFunction = 0;
-uintptr_t g_ReceiveFunction = 0;
-uintptr_t g_AdminFunction = 0;
-uintptr_t g_AdminLibrary = 0;
+std::atomic<uintptr_t> g_ReceiveFunction{0};
+std::atomic<uintptr_t> g_AdminFunction{0};
+std::atomic<uintptr_t> g_AdminLibrary{0};
 uintptr_t g_ClientEventFunction = 0;
 uintptr_t g_ServerEventFunction = 0;
 uintptr_t g_SystemMessageFunction = 0;
-bool g_Hooked = false;
+std::atomic<bool> g_Hooked{false};
 std::string g_Status = "not initialised";
+int g_InitAttempts = 0;
+
+// Late-registered classes (PrivilegeFunctionLibrary in particular) may not exist yet when
+// Initialize() first runs, so anything missing is looked up again on a timer.
+std::mutex g_LateMutex;
+std::chrono::steady_clock::time_point g_LastLateResolve{};
+constexpr auto kLateResolveInterval = std::chrono::seconds(15);
+
+// Discovered PlayerChatComponent offset per controller class.
+std::mutex g_ComponentMutex;
+std::map<uintptr_t, uintptr_t> g_ChatOffsetByClass;
+std::map<uintptr_t, std::chrono::steady_clock::time_point> g_ChatDiscoveryFailedAt;
+constexpr auto kDiscoveryRetry = std::chrono::seconds(15);
 
 std::mutex g_ListenerMutex;
 std::vector<Listener> g_Listeners;
@@ -96,6 +120,197 @@ void DeliverEvent(const PlayerEvent& event) {
             listener(event);
         } catch (...) {
         }
+    }
+}
+
+// A live UObject: aligned, readable, vtable inside the game image.
+bool LooksLikeObject(uintptr_t candidate) {
+    if (!candidate || (candidate & 7) != 0) return false;
+    if (!Mem::Readable((void*)candidate, 0x30)) return false;
+    return Mem::InImage((void*)Mem::ReadPtr(candidate));
+}
+
+bool IsChatComponent(uintptr_t candidate) {
+    Engine* engine = g_Engine;
+    return engine && LooksLikeObject(candidate) && engine->IsA(candidate, kChatComponentClass);
+}
+
+// The component must belong to this controller: a PlayerChatComponent is a default
+// subobject, so its Outer is the controller that owns it. This is what stops a scan from
+// ever settling on another player's component.
+bool IsOwnedChatComponent(uintptr_t candidate, uintptr_t controller) {
+    return IsChatComponent(candidate) &&
+           Mem::ReadPtr(candidate + Offsets::UObject_Outer) == controller;
+}
+
+// How far the controller's own members extend, from its class's reflected PropertiesSize.
+// Scanning further would read whatever object the allocator placed next to it.
+uintptr_t ControllerScanEnd(uintptr_t controller) {
+    uintptr_t cls = Mem::ReadPtr(controller + Offsets::UObject_Class);
+    int32_t size = cls ? Mem::ReadI32(cls + Offsets::UStruct_PropertiesSize) : 0;
+    if (size <= (int32_t)kControllerScanStart || size > (int32_t)kControllerScanLimit) return 0;
+    return (uintptr_t)size & ~(uintptr_t)7;
+}
+
+// Finds the controller-relative offset of its PlayerChatComponent pointer. Hints first,
+// then a scan of the controller's members. Returns 0 when nothing validates or when more
+// than one distinct owned component turns up - an ambiguous answer is worse than none.
+uintptr_t DiscoverChatOffset(uintptr_t controller, std::string& outVia) {
+    Engine* engine = g_Engine;
+    if (!engine || !controller) return 0;
+
+    for (uintptr_t hint : kChatComponentHints) {
+        if (IsOwnedChatComponent(Mem::ReadPtr(controller + hint), controller)) {
+            outVia = "hint";
+            return hint;
+        }
+    }
+
+    uintptr_t end = ControllerScanEnd(controller);
+    if (!end) {
+        LogMessage("Chat: " + engine->GetObjectClassName(controller) +
+                   " has no usable PropertiesSize, skipping the member scan");
+        return 0;
+    }
+    if (!Mem::Readable((void*)(controller + kControllerScanStart), end - kControllerScanStart)) return 0;
+
+    uintptr_t foundOffset = 0, foundValue = 0;
+    for (uintptr_t offset = kControllerScanStart; offset + 8 <= end; offset += 8) {
+        uintptr_t value = *(const uintptr_t*)(controller + offset);
+        if (!IsOwnedChatComponent(value, controller)) continue;
+        if (foundValue && foundValue != value) {
+            LogMessage("Chat: several PlayerChatComponents on " + engine->GetObjectClassName(controller) +
+                       " (+" + HexString(foundOffset) + ", +" + HexString(offset) + "), refusing to guess");
+            return 0;
+        }
+        if (!foundValue) { foundOffset = offset; foundValue = value; }
+    }
+    if (!foundValue) return 0;
+
+    outVia = "member scan";
+    return foundOffset;
+}
+
+// Last resort: walk the object registry for the component owned by this controller and
+// work back to the member offset that points at it.
+uintptr_t DiscoverChatOffsetFromRegistry(uintptr_t controller) {
+    Engine* engine = g_Engine;
+    if (!engine) return 0;
+
+    uintptr_t match = 0;
+    int32_t count = engine->GetObjectCount();
+    for (int32_t i = 0; i < count; i++) {
+        uintptr_t object = engine->GetObjectByIndex(i);
+        if (!object) continue;
+        if (Mem::ReadPtr(object + Offsets::UObject_Outer) != controller) continue;
+        if (!IsChatComponent(object)) continue;
+        if (match && match != object) return 0;  // ambiguous
+        match = object;
+    }
+    if (!match) return 0;
+
+    // Matching one exact, ownership-checked address, so a fixed window is safe here even
+    // when the reflected size is unavailable - the first hit is inside the controller.
+    uintptr_t end = ControllerScanEnd(controller);
+    if (!end) end = 0x2000;
+    for (uintptr_t offset = 0x28; offset + 8 <= end; offset += 8) {
+        if (Mem::ReadPtr(controller + offset) == match) return offset;
+    }
+    return 0;
+}
+
+// The validated PlayerChatComponent for a controller, or 0. The discovered offset is cached
+// per controller class and re-validated on every call, so a patch that moves the member
+// costs one rediscovery rather than misdirected RPCs.
+uintptr_t ResolveChatComponent(uintptr_t controller) {
+    Engine* engine = g_Engine;
+    if (!engine || !controller || !LooksLikeObject(controller)) return 0;
+
+    uintptr_t controllerClass = Mem::ReadPtr(controller + Offsets::UObject_Class);
+    if (!controllerClass) return 0;
+
+    auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(g_ComponentMutex);
+        auto cached = g_ChatOffsetByClass.find(controllerClass);
+        if (cached != g_ChatOffsetByClass.end()) {
+            uintptr_t component = Mem::ReadPtr(controller + cached->second);
+            if (IsOwnedChatComponent(component, controller)) return component;
+            // Null means this controller has not created its component yet (a player who is
+            // still joining) - not a sign the offset is wrong. Anything else is.
+            if (!component) return 0;
+            LogMessage("Chat: cached PlayerChatComponent offset " + HexString(cached->second) +
+                       " no longer validates, rediscovering");
+            g_ChatOffsetByClass.erase(cached);
+        }
+        auto failed = g_ChatDiscoveryFailedAt.find(controllerClass);
+        if (failed != g_ChatDiscoveryFailedAt.end() && now - failed->second < kDiscoveryRetry) {
+            return 0;
+        }
+    }
+
+    std::string via;
+    uintptr_t offset = DiscoverChatOffset(controller, via);
+    if (!offset) {
+        // Mem::Readable works from a cached /proc/self/maps that is re-read at most every
+        // 100ms, so a controller in freshly grown heap (a player who just joined) can look
+        // unmapped for a moment. Refresh once before believing a negative, since a failure
+        // backs off discovery for the whole controller class.
+        Mem::Refresh();
+        offset = DiscoverChatOffset(controller, via);
+    }
+    // The registry sweep walks every UObject. Never on the game thread, where it would be a
+    // visible hitch - the main loop's Poll() gets there within two seconds anyway.
+    if (!offset && !GameThread::IsGameThread()) {
+        offset = DiscoverChatOffsetFromRegistry(controller);
+        if (offset) via = "object registry";
+    }
+    if (!offset && GameThread::IsGameThread()) return 0;  // leave the verdict to Poll()
+
+    std::lock_guard<std::mutex> lock(g_ComponentMutex);
+    if (!offset) {
+        g_ChatDiscoveryFailedAt[controllerClass] = now;
+        LogMessage("Chat: no PlayerChatComponent found on " + engine->GetObjectClassName(controller) +
+                   "; chat delivery to this player is unavailable (retrying in 15s)");
+        return 0;
+    }
+
+    g_ChatDiscoveryFailedAt.erase(controllerClass);
+    g_ChatOffsetByClass[controllerClass] = offset;
+    uintptr_t component = Mem::ReadPtr(controller + offset);
+    LogMessage("Chat: PlayerChatComponent at " + engine->GetObjectClassName(controller) + " +" +
+               HexString(offset) + " via " + via + " (" + engine->GetObjectClassName(component) + ")");
+    return component;
+}
+
+void ResolveLateFunctions(bool force) {
+    Engine* engine = g_Engine;
+    if (!engine || !engine->IsInitialized()) return;
+
+    std::lock_guard<std::mutex> lock(g_LateMutex);
+    auto now = std::chrono::steady_clock::now();
+    if (!force && now - g_LastLateResolve < kLateResolveInterval) return;
+    g_LastLateResolve = now;
+
+    if (!g_ReceiveFunction) {
+        g_ReceiveFunction = engine->FindFunction("PlayerChatComponent", "Client_ReceiveChatMessage");
+        if (g_ReceiveFunction) LogMessage("Chat: Client_ReceiveChatMessage resolved, broadcast available");
+    }
+    if (!g_AdminFunction) {
+        g_AdminFunction = engine->FindFunction("PrivilegeFunctionLibrary", "ControllerIsOwnerOrAdmin");
+    }
+    if (!g_AdminLibrary) {
+        g_AdminLibrary = engine->FindObject("PrivilegeFunctionLibrary", true);
+        if (g_AdminFunction && g_AdminLibrary) LogMessage("Chat: admin check resolved, chat commands available");
+    }
+    if (!g_ClientEventFunction) {
+        g_ClientEventFunction = engine->FindFunction("PlayerChatComponent", "Client_ReceivePlayerEvent");
+    }
+    if (!g_ServerEventFunction) {
+        g_ServerEventFunction = engine->FindFunction("PlayerChatComponent", "Server_SendPlayerEvent");
+    }
+    if (!g_SystemMessageFunction) {
+        g_SystemMessageFunction = engine->FindFunction("PlayerChatComponent", "Client_ReceiveSystemMessage");
     }
 }
 
@@ -162,10 +377,11 @@ void HookedChatProcessEvent(void* self, void* function, void* params) {
 }
 
 bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
-    if (!g_ReceiveFunction || !GameThread::HasProcessEvent()) return false;
+    uintptr_t receive = g_ReceiveFunction;
+    if (!receive || !GameThread::HasProcessEvent()) return false;
     if (!player.controllerPtr || !player.playerStatePtr) return false;
 
-    uintptr_t component = Mem::ReadPtr(player.controllerPtr + kControllerChatComponent);
+    uintptr_t component = ResolveChatComponent(player.controllerPtr);
     if (!component || !Mem::Readable((void*)component, 0x150)) return false;
 
     uint8_t params[kMessageSize + 16];
@@ -187,13 +403,18 @@ bool SendToPlayer(const PlayerInfo& player, const std::string& body) {
     *(uint32_t*)(params + kColor) = 0xFFFFFFFF;
     WriteFString((uintptr_t)params + kMessageBody, body);
 
-    GameThread::CallFunction(component, g_ReceiveFunction, params);
+    GameThread::CallFunction(component, receive, params);
     return true;
 }
 
 bool IsAdmin(uintptr_t controller) {
-    if (!controller || !g_AdminFunction || !g_AdminLibrary) return false;
-    if (!NativeCall::IsNative(g_AdminFunction)) return false;
+    if (!controller) return false;
+    if (!g_AdminFunction || !g_AdminLibrary) ResolveLateFunctions(false);
+
+    uintptr_t function = g_AdminFunction;
+    uintptr_t library = g_AdminLibrary;
+    if (!function || !library) return false;
+    if (!NativeCall::IsNative(function)) return false;
 
     struct Params {
         uintptr_t Controller;
@@ -202,7 +423,7 @@ bool IsAdmin(uintptr_t controller) {
     } params = {};
     params.Controller = controller;
 
-    if (!NativeCall::Invoke(g_AdminLibrary, g_AdminFunction, &params, 0x08)) return false;
+    if (!NativeCall::Invoke(library, function, &params, 0x08)) return false;
     return params.ReturnValue;
 }
 
@@ -359,13 +580,16 @@ void AddEventListener(EventListener listener) {
 void Poll() {
     Engine* engine = g_Engine;
     if (!engine || !engine->IsInitialized() || !g_Hooked) return;
+
+    ResolveLateFunctions(false);
+
     if (!g_ClientEventFunction && !g_ServerEventFunction && !g_SystemMessageFunction) return;
     if (GameThread::VTableIndex() < 0) return;
 
     for (const PlayerInfo& player : engine->GetAllPlayers()) {
         if (!player.controllerPtr) continue;
-        uintptr_t component = Mem::ReadPtr(player.controllerPtr + kControllerChatComponent);
-        if (!component || !Mem::Readable((void*)component, sizeof(uintptr_t))) continue;
+        uintptr_t component = ResolveChatComponent(player.controllerPtr);
+        if (!component) continue;
         uintptr_t vtable = Mem::ReadPtr(component);
         if (!vtable) continue;
 
@@ -395,44 +619,57 @@ bool Initialize() {
         return false;
     }
 
-    g_SendFunction = engine->FindFunction("PlayerChatComponent", "Server_SendChatMessage");
-    g_ReceiveFunction = engine->FindFunction("PlayerChatComponent", "Client_ReceiveChatMessage");
-    g_AdminFunction = engine->FindFunction("PrivilegeFunctionLibrary", "ControllerIsOwnerOrAdmin");
-    g_AdminLibrary = engine->FindObject("PrivilegeFunctionLibrary", true);
-    g_ClientEventFunction = engine->FindFunction("PlayerChatComponent", "Client_ReceivePlayerEvent");
-    g_ServerEventFunction = engine->FindFunction("PlayerChatComponent", "Server_SendPlayerEvent");
-    g_SystemMessageFunction = engine->FindFunction("PlayerChatComponent", "Client_ReceiveSystemMessage");
+    // Called repeatedly until it succeeds (see the main loop); only the first failure and
+    // every tenth after it are logged so a slow load does not flood the console.
+    g_InitAttempts++;
+    bool logFailure = g_InitAttempts == 1 || g_InitAttempts % 10 == 0;
+    std::string attempt = " (attempt " + std::to_string(g_InitAttempts) + ")";
 
+    g_SendFunction = engine->FindFunction("PlayerChatComponent", "Server_SendChatMessage");
     if (!g_SendFunction) {
-        g_Status = "Server_SendChatMessage not found";
-        LogMessage("Chat: " + g_Status);
+        g_Status = "Server_SendChatMessage not found yet";
+        if (logFailure) LogMessage("Chat: " + g_Status + attempt + ", will retry");
         return false;
     }
 
     uintptr_t original = Mem::ReadPtr(g_SendFunction + kExecFunction);
+    if (original == (uintptr_t)&SendThunk) {
+        // Already ours - a previous attempt got this far.
+        g_Hooked = true;
+        g_Status = "hooked";
+        return true;
+    }
     if (!original || !Mem::InImage((void*)original)) {
-        g_Status = "Server_SendChatMessage has no usable thunk";
-        LogMessage("Chat: " + g_Status);
+        g_Status = "Server_SendChatMessage has no usable thunk yet";
+        if (logFailure) LogMessage("Chat: " + g_Status + attempt + ", will retry");
         return false;
     }
+
+    ResolveLateFunctions(true);
 
     g_OriginalSend = (ExecThunk)original;
     *(uintptr_t*)(g_SendFunction + kExecFunction) = (uintptr_t)&SendThunk;
 
     g_Hooked = true;
     g_Status = "hooked";
-    LogMessage("Chat: reading messages from PlayerChatComponent.Server_SendChatMessage");
-    if (!g_ReceiveFunction) LogMessage("Chat: Client_ReceiveChatMessage not found, broadcast unavailable");
-    if (!g_AdminFunction || !g_AdminLibrary) LogMessage("Chat: ControllerIsOwnerOrAdmin not found, chat commands unavailable");
+    LogMessage("Chat: reading messages from PlayerChatComponent.Server_SendChatMessage" +
+               (g_InitAttempts > 1 ? attempt : std::string()));
+    if (!g_ReceiveFunction) {
+        LogMessage("Chat: Client_ReceiveChatMessage not found yet, broadcast unavailable until it is");
+    }
+    if (!g_AdminFunction || !g_AdminLibrary) {
+        LogMessage("Chat: ControllerIsOwnerOrAdmin not found yet, chat commands unavailable until it is");
+    }
     return true;
 }
 
-bool Broadcast(const std::string& body, std::string& outError) {
+bool Broadcast(const std::string& body, std::string& outError, int* outDelivered) {
     Engine* engine = g_Engine;
     if (!engine || !engine->IsInitialized()) {
         outError = "engine not initialised";
         return false;
     }
+    if (!g_ReceiveFunction) ResolveLateFunctions(false);
     if (!g_ReceiveFunction) {
         outError = "Client_ReceiveChatMessage not found";
         return false;
@@ -468,11 +705,15 @@ bool Broadcast(const std::string& body, std::string& outError) {
         return false;
     }
     if (!delivered) {
-        outError = "the game accepted no recipients";
+        outError = "no recipient had a validated PlayerChatComponent - see the log";
         return false;
     }
 
-    LogMessage("Chat: broadcast to " + std::to_string(delivered) + " player(s): " + body);
+    // Dispatched, not confirmed: Client_ReceiveChatMessage is a client RPC and the server
+    // gets no acknowledgement that a client displayed it.
+    LogMessage("Chat: broadcast dispatched to " + std::to_string(delivered) + "/" +
+               std::to_string(players.size()) + " player(s): " + body);
+    if (outDelivered) *outDelivered = delivered;
     return true;
 }
 

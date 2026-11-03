@@ -38,7 +38,13 @@ has. `libstdc++` and `libgcc` are linked statically.
 
 Output: `dist/librsdwapi.so`.
 
-A bare `make` or `xmake` also works if you already have a Linux toolchain.
+A bare `make` or `xmake` also works if you already have a Linux toolchain. Builds on hosts
+with glibc 2.38+ (Ubuntu 24.04, Fedora 39+) stay loadable on the server image thanks to
+`src/utils/glibc_compat.cpp`; run `make glibc-check` to confirm the result needs nothing newer
+than bookworm's glibc 2.36. Objects track their header dependencies, so a header change rebuilds
+everything that includes it; `make rebuild` forces a full build from scratch.
+
+The version lives in `src/version.h` and nowhere else.
 
 ## Install
 
@@ -55,6 +61,16 @@ LD_PRELOAD=/home/container/librsdwapi.so ./RSDragonwilds/Binaries/Linux/RSDragon
 ```
 
 Allocate the API port (and the RCON port, if you turn it on) in the panel.
+
+A ready-made egg is in [`egg/`](egg/): import `egg-runescape-dragonwilds-rsdwapi.json`. It
+installs the server through SteamCMD, downloads `librsdwapi.so` from a GitHub release (by asset
+name) or a URL you give it, writes `DedicatedServer.ini` from panel variables on every boot,
+and exposes every setting below as a panel variable. Edit `egg/install.sh` and `egg/start.sh`,
+then regenerate the JSON with `python3 egg/build-egg.py`.
+
+The mod only activates inside the server binary itself (`RSDragonwildsServer*`, not the `.sh`
+wrapper). `LD_PRELOAD` is inherited by every child of the startup shell, so this keeps a wrapper
+script from grabbing the API port first. Set `RSDWAPI_FORCE=1` to load it into anything else.
 
 ## Configuration
 
@@ -99,6 +115,21 @@ WebhookUrl=
 DeathWebhookUrl=
 Username=Dragonwilds
 ```
+
+### Environment overrides
+
+Any of these, when set and non-empty, override `settings.ini` on startup and are written back
+to it, so the file always shows what is running. Panels export blank variables as empty
+strings, which are ignored. Names are logged at startup; values never are.
+
+| Variable | Setting |
+|----------|---------|
+| `RSDWAPI_VERBOSE_LOGGING` | `[General] VerboseLogging` |
+| `RSDWAPI_API_ENABLED`, `RSDWAPI_API_PORT`, `RSDWAPI_API_BIND`, `RSDWAPI_API_TOKEN`, `RSDWAPI_API_WHITELIST` | `[API]` |
+| `RSDWAPI_RCON_ENABLED`, `RSDWAPI_RCON_PORT`, `RSDWAPI_RCON_BIND`, `RSDWAPI_RCON_PASSWORD`, `RSDWAPI_RCON_WHITELIST` | `[RCON]` |
+| `RSDWAPI_DISCORD_ENABLED`, `RSDWAPI_DISCORD_WEBHOOK`, `RSDWAPI_DISCORD_DEATH_WEBHOOK`, `RSDWAPI_DISCORD_USERNAME` | `[Discord]` |
+
+Booleans accept `true`/`1`/`yes`/`on`.
 
 Set `Enabled=true` and paste a webhook URL to relay in-game chat to a Discord channel.
 Player deaths go to `DeathWebhookUrl`, or to `WebhookUrl` when that is left empty.
@@ -169,12 +200,18 @@ curl -H "Authorization: Bearer TOKEN" http://localhost:8080/api/players
     "health":     { "current": 100.0, "max": 100.0, "canDie": true, "isDead": false },
     "sustenance": { "current": 72.0, "max": 100.0 },
     "hydration":  { "current": 65.0, "max": 100.0 },
+    "endurance":  { "current": 99.4, "max": null, "source": "component" },
     "attributes": [{ "name": "Health", "value": 100.0, "baseValue": 100.0, "shared": false }],
     "skills":     [{ "skill": "SKILL_Woodcutting", "currentXP": 4210 }],
     "pointers": { "playerState": "0x...", "pawn": "0x...", "controller": "0x..." }
   }]
 }
 ```
+
+`endurance` comes from the pawn's `EnduranceComponent` (or `Endurance`/`MaxEndurance`
+attributes, if a build ever adds them). The live component stores no maximum, so `max` is
+`null` unless the game provides one. The whole field is `null` when nothing plausible is
+read; `source` says where it came from.
 
 Health and max health come from the character's attributes component, not from
 `UHealthComponent`'s own fields - on a player those are always zero, because
@@ -205,6 +242,13 @@ curl -X POST http://localhost:8080/api/broadcast -H "Authorization: Bearer TOKEN
 The game has no server identity in chat, so a broadcast is delivered under the receiving
 player's own name. Everyone sees the `[Server]` prefix, but it appears as though they sent
 it themselves.
+
+The response reports how many players the message was *dispatched* to. Chat messages are
+client RPCs, so the server never learns whether a client actually displayed one.
+
+Each player's `PlayerChatComponent` is located at runtime and validated by class before every
+use, so a game patch that moves it costs one rediscovery (logged) instead of silently sending
+messages to the wrong component.
 
 ### POST /api/give
 

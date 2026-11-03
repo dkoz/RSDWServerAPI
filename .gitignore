@@ -3,4 +3,6 @@ build/
 .xmake/
 src/**/*.o
 src/*.o
-RSDWSDK/
+RSDWSDK/build/
+src/**/*.d
+src/*.d

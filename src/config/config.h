@@ -177,12 +177,60 @@ struct APIConfig {
         return token;
     }
 
+    // Lets a panel (Pterodactyl/Pelican egg variables, docker -e) drive the settings without
+    // editing settings.ini. Only variables that are set AND non-empty apply - panels export
+    // every variable, blank ones as "" - and applied values are written back to settings.ini
+    // so the file always shows what is running. Returns the names applied, for the log;
+    // values are never logged.
+    std::vector<std::string> ApplyEnvironment() {
+        std::vector<std::string> applied;
+        auto str = [&](const char* name, std::string& target) {
+            const char* v = getenv(name);
+            if (v && *v) { target = v; applied.push_back(name); }
+        };
+        auto num = [&](const char* name, int& target, int lo, int hi) {
+            const char* v = getenv(name);
+            if (!v || !*v) return;
+            int n = atoi(v);
+            if (n < lo || n > hi) return;
+            target = n;
+            applied.push_back(name);
+        };
+        auto flag = [&](const char* name, bool& target) {
+            const char* v = getenv(name);
+            if (v && *v) { target = ParseBool(v); applied.push_back(name); }
+        };
+
+        flag("RSDWAPI_VERBOSE_LOGGING", verboseLogging);
+
+        flag("RSDWAPI_API_ENABLED", rest.enabled);
+        num("RSDWAPI_API_PORT", rest.port, 1, 65535);
+        str("RSDWAPI_API_BIND", rest.bindAddress);
+        str("RSDWAPI_API_TOKEN", rest.bearerToken);
+        str("RSDWAPI_API_WHITELIST", rest.ipWhitelist);
+
+        flag("RSDWAPI_RCON_ENABLED", rcon.enabled);
+        num("RSDWAPI_RCON_PORT", rcon.port, 1, 65535);
+        str("RSDWAPI_RCON_BIND", rcon.bindAddress);
+        str("RSDWAPI_RCON_PASSWORD", rcon.password);
+        str("RSDWAPI_RCON_WHITELIST", rcon.ipWhitelist);
+
+        flag("RSDWAPI_DISCORD_ENABLED", discord.enabled);
+        str("RSDWAPI_DISCORD_WEBHOOK", discord.webhookUrl);
+        str("RSDWAPI_DISCORD_DEATH_WEBHOOK", discord.deathWebhookUrl);
+        str("RSDWAPI_DISCORD_USERNAME", discord.username);
+        return applied;
+    }
+
     static std::string GetConfigPath() { return GetBaseDir() + "/settings.ini"; }
     static void EnsureConfigDirectory() { EnsureDir(GetBaseDir()); }
 
 private:
     static const char* Bool(bool value) { return value ? "true" : "false"; }
-    static bool ParseBool(const std::string& value) { return value == "true" || value == "1"; }
+    static bool ParseBool(const std::string& value) {
+        return value == "true" || value == "1" || value == "True" || value == "TRUE" ||
+               value == "yes" || value == "on";
+    }
 
     void Apply(const std::string& section, const std::string& key, const std::string& value) {
         if (section == "General") {

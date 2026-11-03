@@ -3,6 +3,7 @@
 #include "../utils/logger.h"
 #include "../utils/memory.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -21,10 +22,11 @@ namespace GameThread {
 
 namespace {
 
-ProcessEventFn g_Original = nullptr;
-uintptr_t g_ProcessEvent = 0;
-int g_VTableIndex = -1;
-bool g_Ready = false;
+// Written on the game thread (DeriveProcessEvent) and read from the HTTP/RCON threads.
+std::atomic<ProcessEventFn> g_Original{nullptr};
+std::atomic<uintptr_t> g_ProcessEvent{0};
+std::atomic<int> g_VTableIndex{-1};
+std::atomic<bool> g_Ready{false};
 std::string g_Status = "not initialised";
 
 std::mutex g_QueueMutex;
@@ -185,7 +187,8 @@ void HookedProcessEvent(void* self, void* function, void* params) {
     }
     if (hasWork) Drain();
 
-    g_Original(self, function, params);
+    ProcessEventFn original = g_Original.load();
+    if (original) original(self, function, params);
 }
 
 int FindVTableIndex(uintptr_t vtable, uintptr_t target) {
@@ -262,7 +265,12 @@ const char* kPumpCandidates[] = {
     "ServerCheckClientPossession",
 };
 
-bool g_DeriveAttempted = false;
+// DeriveProcessEvent used to give up after one failed stack walk (issue #6). The pump runs
+// on every camera update, so retrying is cheap - it is only throttled to keep the vtable
+// matching off the hot path.
+std::chrono::steady_clock::time_point g_NextDeriveAt{};
+int g_DeriveAttempts = 0;
+constexpr auto kDeriveRetry = std::chrono::seconds(5);
 
 uintptr_t MatchSharedVTableSlot(uintptr_t address, int& outIndex) {
     DomEngine::Engine* engine = DomEngine::g_Engine;
@@ -313,12 +321,15 @@ uintptr_t MatchSharedVTableSlot(uintptr_t address, int& outIndex) {
 }
 
 void DeriveProcessEvent() {
-    if (g_ProcessEvent || g_DeriveAttempted) return;
+    if (g_ProcessEvent) return;
 
     DomEngine::Engine* engine = DomEngine::g_Engine;
     if (!engine || !engine->IsInitialized()) return;
 
-    g_DeriveAttempted = true;
+    auto now = std::chrono::steady_clock::now();
+    if (now < g_NextDeriveAt) return;
+    g_NextDeriveAt = now + kDeriveRetry;
+    g_DeriveAttempts++;
 
     uintptr_t marker = 0;
     const uintptr_t* stack = &marker;
@@ -331,17 +342,19 @@ void DeriveProcessEvent() {
         uintptr_t candidate = MatchSharedVTableSlot(value, index);
         if (!candidate) continue;
 
-        g_ProcessEvent = candidate;
         g_Original = (ProcessEventFn)candidate;
         g_VTableIndex = index;
+        g_ProcessEvent = candidate;  // published last: HasProcessEvent() keys off it
         LogMessage("GameThread: ProcessEvent derived at " + HexString(candidate) +
                    " (vtable slot " + std::to_string(index) + ", from stack return address " +
-                   HexString(value) + ")");
+                   HexString(value) + ", attempt " + std::to_string(g_DeriveAttempts) + ")");
         return;
     }
 
-    LogMessage("GameThread: could not identify ProcessEvent by walking the pump stack; "
-               "replicated calls stay disabled");
+    if (g_DeriveAttempts == 1 || g_DeriveAttempts % 12 == 0) {
+        LogMessage("GameThread: could not identify ProcessEvent by walking the pump stack (attempt " +
+                   std::to_string(g_DeriveAttempts) + "); retrying every 5s while players are connected");
+    }
 }
 
 pthread_t g_GameThread = 0;
@@ -410,7 +423,7 @@ void RemoveExecPump() {
     g_Ready = false;
 }
 
-bool HasProcessEvent() { return g_ProcessEvent != 0 && g_Original != nullptr; }
+bool HasProcessEvent() { return g_ProcessEvent.load() != 0 && g_Original.load() != nullptr; }
 
 bool FrameLayoutReady() { return g_LayoutReady; }
 uintptr_t FrameNodeOffset() { return g_OffNode; }
@@ -435,6 +448,10 @@ bool Initialize(uintptr_t moduleBase, uintptr_t moduleEnd) {
     std::string source;
     uintptr_t address = FindBySymbol(source);
     if (address && address >= moduleBase && address < moduleEnd) {
+        // A symbol hit is the real UObject::ProcessEvent, so it is callable even if the
+        // vtable hook below fails. Setting both together also stops DeriveProcessEvent from
+        // seeing a half-set state and skipping derivation forever.
+        g_Original = (ProcessEventFn)address;
         g_ProcessEvent = address;
         g_Status = source;
         LogMessage("GameThread: ProcessEvent found via " + source + " at " + HexString(address));
@@ -445,8 +462,10 @@ bool Initialize(uintptr_t moduleBase, uintptr_t moduleEnd) {
                        HexString(moduleEnd) + "; ignoring it");
         }
         g_Status = "ProcessEvent not found in .dynsym or .symtab";
-        LogMessage("GameThread: " + g_Status + " - kick and every other UFunction "
-                   "backed feature stays disabled");
+        // Normal for the stripped Shipping binary. The caller falls back to the exec pump,
+        // which derives ProcessEvent from the stack once a player's camera update runs.
+        LogMessage("GameThread: " + g_Status + " (stripped binary); falling back to the exec "
+                   "pump - kick, give and broadcast unlock once the first player connects");
         return false;
     }
 
@@ -470,8 +489,8 @@ bool Initialize(uintptr_t moduleBase, uintptr_t moduleEnd) {
         return false;
     }
 
-    uintptr_t slotAddress = vtable + (uintptr_t)g_VTableIndex * sizeof(uintptr_t);
-    g_Original = (ProcessEventFn)g_ProcessEvent;
+    uintptr_t slotAddress = vtable + (uintptr_t)g_VTableIndex.load() * sizeof(uintptr_t);
+    g_Original = (ProcessEventFn)g_ProcessEvent.load();
 
     long pageSize = sysconf(_SC_PAGESIZE);
     uintptr_t page = slotAddress & ~(uintptr_t)(pageSize - 1);
@@ -493,8 +512,9 @@ bool Initialize(uintptr_t moduleBase, uintptr_t moduleEnd) {
 }
 
 void CallFunction(uintptr_t object, uintptr_t function, void* params) {
-    if (!g_Original || !object || !function) return;
-    g_Original((void*)object, (void*)function, params);
+    ProcessEventFn original = g_Original.load();
+    if (!original || !object || !function) return;
+    original((void*)object, (void*)function, params);
 }
 
 int VTableIndex() { return g_VTableIndex; }
@@ -505,7 +525,7 @@ bool HookVTable(uintptr_t object, ProcessEventFn hook, ProcessEventFn& outPrevio
     uintptr_t vtable = Mem::ReadPtr(object);
     if (!vtable || !Mem::InImage((void*)vtable)) return false;
 
-    uintptr_t slotAddress = vtable + (uintptr_t)g_VTableIndex * sizeof(uintptr_t);
+    uintptr_t slotAddress = vtable + (uintptr_t)g_VTableIndex.load() * sizeof(uintptr_t);
     uintptr_t previous = Mem::ReadPtr(slotAddress);
     if (!previous) return false;
     if (previous == (uintptr_t)hook) {

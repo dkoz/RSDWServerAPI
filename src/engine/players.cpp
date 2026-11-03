@@ -2,7 +2,9 @@
 #include "../utils/logger.h"
 #include "../utils/memory.h"
 
+#include <cstdio>
 #include <cstring>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -14,7 +16,27 @@ namespace {
 struct PawnComponents {
     uintptr_t sustenance = 0;
     uintptr_t hydration = 0;
+    uintptr_t endurance = 0;
 };
+
+bool g_LoggedPawnComponents = false;
+bool g_LoggedEnduranceProbe = false;
+
+std::string ClassChain(const Engine& engine, uintptr_t object) {
+    std::string chain;
+    uintptr_t cls = Mem::ReadPtr(object + Offsets::UObject_Class);
+    for (int depth = 0; cls && depth < 8; depth++) {
+        if (!chain.empty()) chain += " > ";
+        chain += engine.GetObjectName(cls);
+        cls = Mem::ReadPtr(cls + Offsets::UStruct_SuperStruct);
+    }
+    return chain;
+}
+
+bool Plausible(float current, float max) {
+    return current == current && max == max &&  // not NaN
+           max > 0.0f && max < 1000000.0f && current >= 0.0f && current <= max * 1.01f;
+}
 
 void ReadDoubleTriple(uintptr_t address, double& a, double& b, double& c) {
     if (!Mem::Readable((void*)address, sizeof(double) * 3)) return;
@@ -80,6 +102,8 @@ void Engine::ReadHealthAndAttributes(PlayerInfo& info) const {
     ReadAttributeArrays(attributesComponent, Offsets::Attributes_SharedFloatAttributes,
                         Offsets::Attributes_SharedAttributeValues, true, info.attributes);
 
+    bool haveEndurance = false, haveMaxEndurance = false;
+    float endurance = 0.0f, maxEndurance = 0.0f;
     for (const AttributeInfo& attribute : info.attributes) {
         if (attribute.name == "Health") {
             info.health = attribute.value;
@@ -87,9 +111,23 @@ void Engine::ReadHealthAndAttributes(PlayerInfo& info) const {
         } else if (attribute.name == "MaxHealth") {
             info.maxHealth = attribute.value;
             info.hasHealth = true;
+        } else if (attribute.name == "Endurance") {
+            endurance = attribute.value;
+            haveEndurance = true;
+        } else if (attribute.name == "MaxEndurance") {
+            maxEndurance = attribute.value;
+            haveMaxEndurance = true;
         }
     }
     info.isDead = info.hasHealth && info.health <= 0.0f;
+
+    if (haveEndurance && haveMaxEndurance && Plausible(endurance, maxEndurance)) {
+        info.hasEndurance = true;
+        info.endurance = endurance;
+        info.hasMaxEndurance = true;
+        info.maxEndurance = maxEndurance;
+        info.enduranceSource = "attributes";
+    }
 }
 
 void Engine::ReadSkills(PlayerInfo& info) const {
@@ -233,12 +271,23 @@ std::vector<PlayerInfo> Engine::GetAllPlayers() const {
             }
         }
 
+        // A player who has joined but not spawned yet has no pawn, so no controller via the
+        // pawn - but the controller owns its PlayerState. Without this, join-time messages
+        // (welcome broadcasts) skipped exactly the players they were meant for.
+        if (!info.controllerPtr) {
+            uintptr_t owner = Mem::ReadPtr(playerState + Offsets::Actor_Owner);
+            if (owner && Mem::Readable((void*)owner, 0x40) && IsA(owner, "PlayerController")) {
+                info.controllerPtr = owner;
+            }
+        }
+
         players.push_back(info);
     }
 
     if (pawnSet.empty()) return players;
 
     std::unordered_map<uintptr_t, PawnComponents> byPawn;
+    std::set<std::string> pawnComponentClasses;
     int32_t objectCount = GetObjectCount();
     for (int32_t i = 0; i < objectCount; i++) {
         uintptr_t object = GetObjectByIndex(i);
@@ -248,11 +297,25 @@ std::vector<PlayerInfo> Engine::GetAllPlayers() const {
         if (!outer || pawnSet.find(outer) == pawnSet.end()) continue;
 
         PawnComponents& slots = byPawn[outer];
+        if (!g_LoggedPawnComponents) pawnComponentClasses.insert(GetObjectClassName(object));
         if (!slots.sustenance && IsA(object, "SustenanceComponent")) {
             slots.sustenance = object;
         } else if (!slots.hydration && IsA(object, "HydrationComponent")) {
             slots.hydration = object;
+        } else if (!slots.endurance && IsA(object, "EnduranceComponent")) {
+            // Live chain (5.6.1 CL-254097): BP_EnduranceComponent_C > EnduranceComponent >
+            // SurvivalStatComponent, the same base as Sustenance and Hydration.
+            slots.endurance = object;
         }
+    }
+
+    // One-time inventory of what hangs off a player pawn, so a stat that reads null can be
+    // matched to its real class from a single log instead of a memory dump.
+    if (!g_LoggedPawnComponents && !pawnComponentClasses.empty()) {
+        g_LoggedPawnComponents = true;
+        std::string list;
+        for (const std::string& name : pawnComponentClasses) list += (list.empty() ? "" : ", ") + name;
+        LogMessage("Players: pawn components: " + list);
     }
 
     for (PlayerInfo& info : players) {
@@ -275,6 +338,38 @@ std::vector<PlayerInfo> Engine::GetAllPlayers() const {
             info.hasHydration = true;
             info.hydration = Mem::ReadFloat(slots.hydration + Offsets::SurvivalStat_Current);
             info.maxHydration = Mem::ReadFloat(slots.hydration + Offsets::SurvivalStat_CurrentMax);
+        }
+
+        // Only when the attributes did not already supply it, and only if the values look
+        // like a stat: the component is matched by name fragment and assumed to share the
+        // Sustenance/Hydration layout, so a wrong match must read as "absent", not garbage.
+        if (!info.hasEndurance && slots.endurance && Mem::Readable((void*)slots.endurance, 0x140)) {
+            float current = Mem::ReadFloat(slots.endurance + Offsets::SurvivalStat_Current);
+            float max = Mem::ReadFloat(slots.endurance + Offsets::SurvivalStat_CurrentMax);
+            // Unlike Sustenance/Hydration, the live EnduranceComponent leaves CurrentMax at 0
+            // (observed: Current 99.38, CurrentMax 0), so the current value is accepted on
+            // its own and max is reported only when the game actually stores one.
+            if (Plausible(current, max)) {
+                info.hasEndurance = true;
+                info.endurance = current;
+                info.hasMaxEndurance = true;
+                info.maxEndurance = max;
+                info.enduranceSource = "component";
+            } else if (max == 0.0f && current == current && current >= 0.0f && current <= 1000.0f) {
+                info.hasEndurance = true;
+                info.endurance = current;
+                info.enduranceSource = "component";
+            }
+            // Once per process, and only when nothing usable was read: the class chain and
+            // raw values say where to look instead.
+            if (!g_LoggedEnduranceProbe && !info.hasEndurance) {
+                g_LoggedEnduranceProbe = true;
+                char values[160];
+                snprintf(values, sizeof(values), "+0x130=%g +0x134=%g +0x138=%g",
+                         current, max, Mem::ReadFloat(slots.endurance + Offsets::SurvivalStat_DecayBuffer));
+                LogMessage("Players: endurance component " + ClassChain(*this, slots.endurance) +
+                           " reads " + values + (info.hasEndurance ? " (accepted)" : " (rejected)"));
+            }
         }
 
     }

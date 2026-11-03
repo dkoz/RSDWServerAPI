@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "version.h"
 
 #include <atomic>
 #include <chrono>
@@ -49,7 +50,7 @@ bool RconEnabled() { return g_RconEnabled; }
 bool RconRunning() { return g_RconRunning; }
 int RconPort() { return g_RconPort; }
 
-const char* Version() { return "0.1.1"; }
+const char* Version() { return RSDWAPI_VERSION; }
 
 void BeginShutdown() { g_ShuttingDown = true; }
 bool ShuttingDown() { return g_ShuttingDown; }

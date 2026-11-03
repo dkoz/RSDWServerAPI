@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstring>
 #include <netinet/in.h>
+#include <strings.h>
 #include <netinet/tcp.h>
 #include <sstream>
 #include <sys/select.h>
@@ -13,6 +14,19 @@
 #include <chrono>
 #include <thread>
 #include <unistd.h>
+
+namespace {
+
+// Constant-time comparison so the token cannot be recovered byte by byte from response
+// timing. Length is not secret (tokens are generated at a fixed size).
+bool TokensEqual(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a.size(); i++) diff |= (unsigned char)(a[i] ^ b[i]);
+    return diff == 0;
+}
+
+}
 
 HttpServer::HttpServer()
     : listenSocket(-1), running(false), m_Port(0), listenerThread(nullptr) {}
@@ -163,9 +177,15 @@ std::string HttpServer::ParseRequest(int clientSocket, HttpRequest& req) {
         size_t colon = headerLine.find(':');
         if (colon == std::string::npos) continue;
 
+        // Header names are case-insensitive (RFC 9110 5.1). They are stored lowercased, so
+        // lookups must use lowercase too. Clients such as reqwest and hyper send
+        // "authorization", which used to fail the bearer check with a 401.
         std::string key = headerLine.substr(0, colon);
+        for (char& c : key) c = (char)tolower((unsigned char)c);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
         std::string val = headerLine.substr(colon + 1);
-        while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+        while (!val.empty() && (val[0] == ' ' || val[0] == '\t')) val.erase(0, 1);
+        while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
         req.headers[key] = val;
     }
 
@@ -174,7 +194,7 @@ std::string HttpServer::ParseRequest(int clientSocket, HttpRequest& req) {
     ParseQuery(fullPath, pathOnly, req.query);
     req.path = pathOnly;
 
-    auto it = req.headers.find("Content-Length");
+    auto it = req.headers.find("content-length");
     if (it != req.headers.end()) {
         long contentLength = atol(it->second.c_str());
         if (contentLength > 0 && contentLength < 8 * 1024 * 1024) {
@@ -295,14 +315,14 @@ void HttpServer::HandleClient(int clientSocket) {
     }
 
     if (!g_Config.rest.bearerToken.empty()) {
-        auto authIt = req.headers.find("Authorization");
+        auto authIt = req.headers.find("authorization");
         bool authorized = false;
         if (authIt != req.headers.end()) {
             const std::string& authHeader = authIt->second;
-            const std::string prefix = "Bearer ";
-            if (authHeader.size() > prefix.size() &&
-                authHeader.compare(0, prefix.size(), prefix) == 0) {
-                if (authHeader.substr(prefix.size()) == g_Config.rest.bearerToken) authorized = true;
+            // The auth scheme is case-insensitive too ("bearer" is valid).
+            const size_t prefixLen = 7;  // "Bearer "
+            if (authHeader.size() > prefixLen && strncasecmp(authHeader.c_str(), "Bearer ", prefixLen) == 0) {
+                authorized = TokensEqual(authHeader.substr(prefixLen), g_Config.rest.bearerToken);
             }
         }
         if (!authorized) {

@@ -52,6 +52,7 @@ constexpr uintptr_t UObject_Class     = 0x10;
 constexpr uintptr_t UObject_Name      = 0x18;
 constexpr uintptr_t UObject_Outer     = 0x20;
 constexpr uintptr_t UStruct_SuperStruct = 0x40;
+constexpr uintptr_t UStruct_PropertiesSize = 0x58;  // int32, directly after ChildProperties (0x50)
 constexpr uintptr_t UClass_ClassDefaultObject = 0x110;
 
 // UWorld - Source: RSDWSDK/CppSDK/Assertions.inl
@@ -219,6 +220,14 @@ struct PlayerInfo {
     bool hasHydration = false;
     float hydration = 0.0f;
     float maxHydration = 0.0f;
+
+    // Issue #2. Read from the "Endurance"/"MaxEndurance" attributes when the character
+    // carries them, otherwise from an endurance survival-stat component on the pawn.
+    bool hasEndurance = false;
+    float endurance = 0.0f;
+    bool hasMaxEndurance = false;  // the live component does not store one (reads 0)
+    float maxEndurance = 0.0f;
+    std::string enduranceSource;
 
     std::vector<SkillInfo> skills;
     std::vector<AttributeInfo> attributes;

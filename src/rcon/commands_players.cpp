@@ -87,10 +87,11 @@ void RegisterPlayerCommands() {
                   for (size_t i = 1; i < args.size(); i++) message += " " + args[i];
 
                   std::string error;
-                  if (!DomChat::Broadcast("[Server] " + message, error)) {
+                  int dispatched = 0;
+                  if (!DomChat::Broadcast("[Server] " + message, error, &dispatched)) {
                       return "Broadcast failed: " + error;
                   }
-                  return "Broadcast sent.";
+                  return "Broadcast dispatched to " + std::to_string(dispatched) + " player(s).";
               }});
 
     Register({"give", "give <player> <item> [count]", "Give an item to a player.",
